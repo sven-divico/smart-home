@@ -414,10 +414,12 @@ static void test_window_average_one_raw_point() {
 
 static void test_day_rollup() {
   Series s(M_AIR_TEMP, /*hasDaily=*/true);
-  // two raw points on day 0, finalize them, then cross into day 1
-  s.add(0,                encode(M_AIR_TEMP, 10.0f));
-  s.add(RAW_INTERVAL_S,   encode(M_AIR_TEMP, 20.0f)); // finalizes day0 window @0 (=10)
-  s.add(DAY_S,            encode(M_AIR_TEMP, 30.0f)); // finalizes day0 window (=20), new day
+  // A day only closes when a *finalized raw point* lands in a later day. So we
+  // need day-0 raw points AND a day-1 raw point to actually finalize day 0.
+  s.add(0,                     encode(M_AIR_TEMP, 10.0f)); // opens window @0 (day0)
+  s.add(RAW_INTERVAL_S,        encode(M_AIR_TEMP, 20.0f)); // finalizes raw @0 (=10), opens day0 acc
+  s.add(DAY_S,                 encode(M_AIR_TEMP, 30.0f)); // finalizes raw @900 (=20, still day0)
+  s.add(DAY_S + RAW_INTERVAL_S,encode(M_AIR_TEMP, 40.0f)); // finalizes raw @DAY_S (day1) -> closes day0
   // day 0 daily avg = avg of its raw points (10, 20) = 15
   TEST_ASSERT_EQUAL_UINT16(1, s.dailySize());
   TEST_ASSERT_FLOAT_WITHIN(0.05f, 15.0f, decode(M_AIR_TEMP, s.dailyNewest().value));
@@ -694,6 +696,8 @@ git commit -m "Mission 2: TimeSeriesStore registry + latest()"
 ```
 
 ### Task 4.2: Window resampling, cross-node average, today min/max, trend
+
+> Note: spec §4 lists `trend(metric)`; this plan uses the fuller `trend(node, metric, now)` (the env node + a clock are needed to actually compute it). Intentional refinement, not scope creep.
 
 **Files:**
 - Modify: `lib/TimeSeries/TimeSeriesStore.cpp` (add query bodies)
@@ -1124,8 +1128,8 @@ static void test_inmemory_roundtrips_samples() {
   TEST_ASSERT_TRUE(st.begin());
   st.appendSample(ts::NODE_BEET1, ts::M_SOIL, /*daily=*/false, {100, 41});
   st.appendSample(ts::NODE_BEET1, ts::M_SOIL, /*daily=*/false, {200, 42});
-  Sample out[8]; uint16_t head, count;
-  int n = st.loadRing(ts::NODE_BEET1, ts::M_SOIL, false, out, 8, head, count);
+  Sample out[8];
+  int n = st.loadRing(ts::NODE_BEET1, ts::M_SOIL, false, out, 8);
   TEST_ASSERT_EQUAL_INT(2, n);
   TEST_ASSERT_EQUAL_UINT32(41, out[0].value);
 }
@@ -1167,9 +1171,9 @@ public:
 
   // Append one finalized point (raw or daily) for a series.
   virtual void appendSample(ts::NodeId, ts::Metric, bool daily, const Sample&) = 0;
-  // Load up to maxOut samples (oldest..newest) + the ring head/count to restore.
-  virtual int  loadRing(ts::NodeId, ts::Metric, bool daily,
-                        Sample* out, int maxOut, uint16_t& head, uint16_t& count) = 0;
+  // Load up to maxOut samples, oldest..newest. The store replays them via
+  // pushRawDirect/pushDailyDirect to rebuild the ring, so no head/count is needed.
+  virtual int  loadRing(ts::NodeId, ts::Metric, bool daily, Sample* out, int maxOut) = 0;
 
   virtual void appendPumpEvent(const PumpEvent&) = 0;
   virtual int  loadPumpEvents(PumpEvent* out, int maxOut) = 0;
@@ -1192,8 +1196,7 @@ class InMemoryStorage : public SeriesStorage {
 public:
   bool begin() override { return true; }
   void appendSample(ts::NodeId, ts::Metric, bool daily, const Sample&) override;
-  int  loadRing(ts::NodeId, ts::Metric, bool daily,
-                Sample* out, int maxOut, uint16_t& head, uint16_t& count) override;
+  int  loadRing(ts::NodeId, ts::Metric, bool daily, Sample* out, int maxOut) override;
   void appendPumpEvent(const PumpEvent&) override;
   int  loadPumpEvents(PumpEvent* out, int maxOut) override;
   void saveClock(uint32_t epoch) override { clock_ = epoch; haveClock_ = true; }
@@ -1232,14 +1235,10 @@ void InMemoryStorage::appendSample(NodeId n, Metric m, bool daily, const Sample&
   else { memmove(b.s, b.s + 1, (cap - 1) * sizeof(Sample)); b.s[cap - 1] = s; }
 }
 
-int InMemoryStorage::loadRing(NodeId n, Metric m, bool daily,
-                              Sample* out, int maxOut, uint16_t& head, uint16_t& count) {
+int InMemoryStorage::loadRing(NodeId n, Metric m, bool daily, Sample* out, int maxOut) {
   Buf& b = bufFor(n, m, daily);
-  int cap = daily ? DAILY_CAP : RAW_CAP;
   int k = b.count < maxOut ? b.count : maxOut;
   for (int i = 0; i < k; i++) out[i] = b.s[i];
-  count = (uint16_t)b.count;
-  head  = (uint16_t)(b.count % cap);
   return k;
 }
 
@@ -1271,7 +1270,7 @@ git commit -m "Mission 2: SeriesStorage interface + InMemoryStorage (tests + RAM
 - Modify: `lib/TimeSeries/Series.h` / `.cpp` (notify a callback when a raw/daily point finalizes)
 - Modify: `test/test_store/test_store.cpp` (add a write-through test)
 
-Approach: `Series` gets an optional sink callback `void(*)(void*, bool daily, const Sample&)` invoked from `finalizeWindow`/`finalizeDay`. The store sets the sink to forward to `SeriesStorage::appendSample`. This keeps `Series` ignorant of storage (clean boundary) while making persistence automatic.
+Approach: `Series` gets an optional sink callback (a function pointer + `void* ctx`, no Arduino/storage type — keeps `Series` pure) invoked from `finalizeWindow`/`finalizeDay`. The store sets the sink to a trampoline that forwards to `SeriesStorage::appendSample`. Only **finalized** points fire the sink, so only they persist; the in-progress 15-min window (and the open day accumulator) are intentionally **not** persisted — they're cheap to rebuild from live data and `latest()` already reflects the freshest sample. `pushRawDirect`/`pushDailyDirect` deliberately do **not** fire the sink (used by `reload()` to avoid re-persisting, and by seeding which persists once via `persistAll()`).
 
 - [ ] **Step 1: Add the failing test** to `test/test_store/test_store.cpp` (+ `RUN_TEST`):
 ```cpp
@@ -1281,8 +1280,8 @@ static void test_writethrough_persists_finalized_points() {
   TimeSeriesStore store; store.init(&st);
   store.add(NODE_BEET1, M_SOIL, 0, encode(M_SOIL, 40));
   store.add(NODE_BEET1, M_SOIL, RAW_INTERVAL_S + 1, encode(M_SOIL, 50)); // finalizes window @0
-  Sample out[8]; uint16_t h, c;
-  int n = st.loadRing(NODE_BEET1, M_SOIL, false, out, 8, h, c);
+  Sample out[8];
+  int n = st.loadRing(NODE_BEET1, M_SOIL, false, out, 8);
   TEST_ASSERT_EQUAL_INT(1, n);
   TEST_ASSERT_EQUAL_INT16(40, out[0].value);
 }
@@ -1300,7 +1299,7 @@ Run: `~/.platformio/penv/bin/pio test -e native_test -f test_store`
 and members `Sink sink_ = nullptr; void* sinkCtx_ = nullptr; ts::NodeId node_ = ts::NODE_COUNT;`
 In `Series.cpp`, at the end of `finalizeWindow` (after `raw_.push`) call `if (sink_) sink_(sinkCtx_, node_, metric_, false, {windowStart, avg});` and in `finalizeDay` after `daily_.push` call `if (sink_) sink_(sinkCtx_, node_, metric_, true, {dayKey_*DAY_S, avg});`.
 
-In `TimeSeriesStore.h`: change `void init();` → `void init(SeriesStorage* storage = nullptr);`, add `void reload();` and a member `SeriesStorage* storage_ = nullptr;` plus a static sink trampoline.
+In `TimeSeriesStore.h`: add `#include "SeriesStorage.h"` (forward-declaring is enough, but the include keeps it simple); change `void init();` → `void init(SeriesStorage* storage = nullptr);`; add `void reload();` and `void persistAll();`; add a member `SeriesStorage* storage_ = nullptr;` and declare `static void sinkTrampoline(void* ctx, ts::NodeId, ts::Metric, bool daily, const Sample&);`.
 In `TimeSeriesStore.cpp` `init`: store `storage_`, and after constructing each Series call `series_[count_]->setSink(&TimeSeriesStore::sinkTrampoline, this, cfg[i].node);`. Add:
 ```cpp
 void TimeSeriesStore::sinkTrampoline(void* ctx, NodeId n, Metric m, bool daily, const Sample& s) {
@@ -1309,14 +1308,33 @@ void TimeSeriesStore::sinkTrampoline(void* ctx, NodeId n, Metric m, bool daily, 
 }
 void TimeSeriesStore::reload() {
   if (!storage_) return;
-  Sample buf[DAILY_CAP]; uint16_t head, count;
+  Sample buf[DAILY_CAP];
   for (int i = 0; i < count_; i++) {
     NodeId n = keys_[i].node; Metric m = keys_[i].metric;
-    int nr = storage_->loadRing(n, m, false, buf, RAW_CAP, head, count);
+    int nr = storage_->loadRing(n, m, false, buf, RAW_CAP);
     for (int k = 0; k < nr; k++) series_[i]->pushRawDirect(buf[k]);
     if (series_[i]->hasDaily()) {
-      int nd = storage_->loadRing(n, m, true, buf, DAILY_CAP, head, count);
+      int nd = storage_->loadRing(n, m, true, buf, DAILY_CAP);
       for (int k = 0; k < nd; k++) series_[i]->pushDailyDirect(buf[k]);
+    }
+  }
+}
+
+// Persist the entire current contents of every ring to storage (one-time, after
+// seeding). Live points persist automatically via the Series sink; seeded points
+// are inserted with pushRawDirect (no sink), so they need this explicit flush.
+// Note: with the per-slot SdStorage this re-opens each file per sample, so first-
+// boot seeding takes a few seconds — acceptable as a one-time cost; a bulk
+// saveRing() could be added later if it becomes annoying.
+void TimeSeriesStore::persistAll() {
+  if (!storage_) return;
+  for (int i = 0; i < count_; i++) {
+    NodeId n = keys_[i].node; Metric m = keys_[i].metric;
+    const Ring& r = series_[i]->raw();
+    for (uint16_t k = 0; k < r.size(); k++) storage_->appendSample(n, m, false, r.at(k));
+    if (series_[i]->hasDaily()) {
+      const Ring& d = series_[i]->daily();
+      for (uint16_t k = 0; k < d.size(); k++) storage_->appendSample(n, m, true, d.at(k));
     }
   }
 }
@@ -1352,8 +1370,7 @@ class SdStorage : public SeriesStorage {
 public:
   bool begin() override;
   void appendSample(ts::NodeId, ts::Metric, bool daily, const Sample&) override;
-  int  loadRing(ts::NodeId, ts::Metric, bool daily,
-                Sample* out, int maxOut, uint16_t& head, uint16_t& count) override;
+  int  loadRing(ts::NodeId, ts::Metric, bool daily, Sample* out, int maxOut) override;
   void appendPumpEvent(const PumpEvent&) override;
   int  loadPumpEvents(PumpEvent* out, int maxOut) override;
   void saveClock(uint32_t epoch) override;
@@ -1411,9 +1428,7 @@ void SdStorage::appendSample(NodeId n, Metric m, bool daily, const Sample& s) {
   f.close();
 }
 
-int SdStorage::loadRing(NodeId n, Metric m, bool daily,
-                        Sample* out, int maxOut, uint16_t& head, uint16_t& count) {
-  head = 0; count = 0;
+int SdStorage::loadRing(NodeId n, Metric m, bool daily, Sample* out, int maxOut) {
   if (!ok_) return 0;
   char path[48]; pathFor(n, m, daily, path, sizeof(path));
   File f = SD.open(path, FILE_READ);
@@ -1422,7 +1437,6 @@ int SdStorage::loadRing(NodeId n, Metric m, bool daily,
   if (f.size() < (int)sizeof(h)) { f.close(); return 0; }
   f.read((uint8_t*)&h, sizeof(h));
   if (h.magic != MAGIC) { f.close(); return 0; }
-  head = h.head; count = h.count;
   uint16_t size = h.count < h.capacity ? h.count : h.capacity;
   uint16_t start = (h.head + h.capacity - size) % h.capacity;
   int k = 0;
@@ -1476,6 +1490,62 @@ Expected: build succeeds (the file is included in the device env). It is not yet
 ```bash
 git add src/data/SdStorage.h src/data/SdStorage.cpp
 git commit -m "Mission 2: SdStorage — binary ring files over microSD (device-only)"
+```
+
+### Task 6.4: PumpLog write-through (sink + direct-append for reload)
+
+**Files:**
+- Modify: `lib/TimeSeries/PumpLog.h`, `lib/TimeSeries/PumpLog.cpp`
+- Modify: `test/test_pumplog/test_pumplog.cpp` (add a sink test)
+
+Mirror the Series persistence pattern so pump events persist: `append()` fires an optional sink (wired by the device app to `SeriesStorage::appendPumpEvent`); `appendDirect()` is RAM-only for `reload`. PumpLog stays pure (function-pointer sink, no storage type).
+
+- [ ] **Step 1: Add the failing test** to `test/test_pumplog/test_pumplog.cpp` (+ its `RUN_TEST`):
+```cpp
+static int g_sinkCount = 0;
+static void countingSink(void*, const PumpEvent&) { g_sinkCount++; }
+
+static void test_sink_fires_on_append_only() {
+  PumpLog log; g_sinkCount = 0;
+  log.setSink(countingSink, nullptr);
+  log.append({100, 0, EV_START, 30, 35});   // fires sink
+  log.appendDirect({200, 0, EV_STOP, 46, 45}); // RAM only, no sink
+  TEST_ASSERT_EQUAL_INT(1, g_sinkCount);
+  TEST_ASSERT_EQUAL_UINT16(2, log.size());
+}
+```
+
+- [ ] **Step 2: Run, expect FAIL**
+
+Run: `~/.platformio/penv/bin/pio test -e native_test -f test_pumplog`
+
+- [ ] **Step 3: Implement** — in `PumpLog.h` add to the public section:
+```cpp
+  using Sink = void(*)(void* ctx, const PumpEvent&);
+  void setSink(Sink fn, void* ctx) { sink_ = fn; sinkCtx_ = ctx; }
+  void appendDirect(const PumpEvent& e) { ring_.push(e); }  // RAM only (reload)
+```
+and to the private section:
+```cpp
+  Sink  sink_ = nullptr;
+  void* sinkCtx_ = nullptr;
+```
+In `PumpLog.cpp` replace `append`:
+```cpp
+void PumpLog::append(const PumpEvent& e) {
+  ring_.push(e);
+  if (sink_) sink_(sinkCtx_, e);
+}
+```
+
+- [ ] **Step 4: Run, expect PASS** (4 tests in this suite)
+
+Run: `~/.platformio/penv/bin/pio test -e native_test -f test_pumplog`
+
+- [ ] **Step 5: Commit**
+```bash
+git add lib/TimeSeries/PumpLog.h lib/TimeSeries/PumpLog.cpp test/test_pumplog/test_pumplog.cpp
+git commit -m "Mission 2: PumpLog write-through sink + appendDirect for reload"
 ```
 
 ---
@@ -1707,6 +1777,14 @@ public:
   UiModel buildModel() override;
   void togglePump(int index) override;
 private:
+  void fillDateTime(UiModel&, uint32_t now);
+  void fillEnv(UiModel&, uint32_t now);
+  void fillChart(UiModel&, uint32_t now);
+  void fillNodes(UiModel&, uint32_t now);
+  void fillPumps(UiModel&, uint32_t now);
+  bool lastStart(ts::NodeId, uint32_t& ts) const;  // newest START ts for a node
+  bool lastStop(ts::NodeId, uint32_t& ts) const;   // newest STOP ts for a node
+
   TimeSeriesStore& store_;
   PumpLog& log_;
   Clock& clock_;
@@ -1715,12 +1793,159 @@ private:
 
 - [ ] **Step 2: Implement `GardenRepository.cpp`**
 
-Notes for the implementer:
-- Build the strings (`dateLine`, `clock`, sparkline arrays, etc.) into `static` buffers owned by the repository instance or function-local statics — `UiModel` holds `const char*`, so the pointed-to storage must outlive the render call. Use a `static char` buffer per field (the device renders one model at a time).
-- Map fields exactly per spec §5: `latest()`→current values; `sampleWindow(...,7)`→`ChartSeries` + per-node `spark12h`/`spark7d`; `averageAcrossNodes`→chart soil bars; `minMaxToday`→`dayLoC`/`dayHiC`; `trend`→`pressureTrend`. `hasAlert`/`alertText` stay constant. Derive `glyph` from lux + humidity, `dry` from `soil < SimSource::DRY_THRESHOLD`, pump `minutesToday`/`avgPerDay` from `PumpLog`.
-- `togglePump(index)` appends a START or STOP `PumpEvent` for that node via the store/log (reading freshest soil + thresholds), inverting current `isRunning` state. The next `buildModel()` reflects it.
+`UiModel` holds `const char*` fields, so string storage must outlive the render call. The device renders one model at a time, so file-static buffers are safe. Every `UiModel` field is populated (spec §5); `hasAlert`/`alertText` are constants this mission.
+```cpp
+#include "GardenRepository.h"
+#include "SimSource.h"     // DRY_THRESHOLD / WET_TARGET
+#include <time.h>
+#include <math.h>
+#include <stdio.h>
+using namespace ts;
 
-Provide the full mapping in code (one helper per page section: `fillEnv`, `fillChart`, `fillNodes`, `fillPumps`). Keep each helper short and focused. The node order is `{NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS}`; names match the locked UI (`"Beet 1"`, `"Beet 2"`, `"Beet 3"`, `"Gewächshaus Hochbeet"`). Convert epoch→German date/time via `gmtime`/manual formatting (no RTC libs needed).
+static const char*  NODE_NAMES[4] = {"Beet 1", "Beet 2", "Beet 3", "Gewächshaus Hochbeet"};
+static const NodeId SOIL_NODES[4] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS};
+
+// string storage for the const char* fields of one UiModel
+static char s_dateLine[48], s_clockLong[16], s_clock[8];
+static char s_nodeId[4][12], s_statusLine[4][24];
+
+static int    iround(float v) { return (int)lroundf(v); }
+static int8_t i8(float v) { if (v < -128) v = -128; if (v > 127) v = 127; return (int8_t)lroundf(v); }
+
+void LocalRepository::fillDateTime(UiModel& m, uint32_t now) {
+  time_t t = (time_t)now; struct tm tv; gmtime_r(&t, &tv);
+  static const char* WD[7] = {"Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"};
+  static const char* MO[12] = {"Januar","Februar","März","April","Mai","Juni",
+                               "Juli","August","September","Oktober","November","Dezember"};
+  snprintf(s_dateLine, sizeof(s_dateLine), "%s, %d. %s %d",
+           WD[tv.tm_wday], tv.tm_mday, MO[tv.tm_mon], tv.tm_year + 1900);
+  snprintf(s_clockLong, sizeof(s_clockLong), "%02d:%02d Uhr", tv.tm_hour, tv.tm_min);
+  snprintf(s_clock, sizeof(s_clock), "%02d:%02d", tv.tm_hour, tv.tm_min);
+  m.dateLine = s_dateLine; m.clockLong = s_clockLong; m.clock = s_clock;
+}
+
+void LocalRepository::fillEnv(UiModel& m, uint32_t now) {
+  EnvStation& e = m.env;
+  float temp = store_.latest(NODE_ENV, M_AIR_TEMP); if (isnan(temp)) temp = 20;
+  float hum  = store_.latest(NODE_ENV, M_HUMIDITY); if (isnan(hum))  hum  = 55;
+  float lux  = store_.latest(NODE_ENV, M_LUX);      if (isnan(lux))  lux  = 0;
+  float pres = store_.latest(NODE_ENV, M_PRESSURE); if (isnan(pres)) pres = 1013;
+  e.tempC = temp; e.humidityPct = iround(hum); e.lightLux = iround(lux); e.pressureHpa = iround(pres);
+
+  if      (lux < 500)  { e.glyph = WX_MOON;  e.condition = "Klar"; }
+  else if (hum > 80)   { e.glyph = WX_RAIN;  e.condition = "Regen"; }
+  else if (lux > 8000) { e.glyph = WX_SUN;   e.condition = "Sonnig"; }
+  else                 { e.glyph = WX_CLOUD; e.condition = "Bewölkt"; }
+
+  e.feelsLikeC = iround(temp + (hum > 65 ? 2.0f : 0.0f) - (hum < 30 ? 1.0f : 0.0f));
+
+  int tr = store_.trend(NODE_ENV, M_PRESSURE, now);
+  e.pressureTrend = (tr > 0 ? TREND_UP : (tr < 0 ? TREND_DOWN : TREND_STEADY));
+  e.pressureWord  = (tr > 0 ? "Luftdruck steigt · stabil"
+                            : (tr < 0 ? "Luftdruck fällt" : "Luftdruck stabil"));
+
+  float lo, hi;
+  if (store_.minMaxToday(NODE_ENV, M_AIR_TEMP, now, lo, hi)) { e.dayLoC = iround(lo); e.dayHiC = iround(hi); }
+  else { e.dayLoC = iround(temp); e.dayHiC = iround(temp); }
+}
+
+void LocalRepository::fillChart(UiModel& m, uint32_t now) {
+  float temp7[7]; store_.sampleWindow(NODE_ENV, M_AIR_TEMP, W_7D, now, temp7, 7);
+  float soil7[7]; store_.averageAcrossNodes(M_SOIL, W_7D, now, soil7, 7);
+  for (int i = 0; i < 7; i++) { m.chart.tempC[i] = temp7[i]; m.chart.soilPct[i] = iround(soil7[i]); }
+}
+
+void LocalRepository::fillNodes(UiModel& m, uint32_t now) {
+  for (int i = 0; i < 4; i++) {
+    Node& nd = m.nodes[i]; NodeId node = SOIL_NODES[i];
+    float soil = store_.latest(node, M_SOIL);      if (isnan(soil)) soil = 40;
+    float stmp = store_.latest(node, M_SOIL_TEMP); if (isnan(stmp)) stmp = 17;
+    nd.name = NODE_NAMES[i];
+    nd.soilPct = iround(soil); nd.soilTempC = stmp;
+    nd.dry = nd.soilPct < SimSource::DRY_THRESHOLD;
+    nd.pumpOn = log_.isRunning((uint8_t)node, now);
+    float s12[7]; store_.sampleWindow(node, M_SOIL, W_12H, now, s12, 7);
+    float s7[7];  store_.sampleWindow(node, M_SOIL, W_7D,  now, s7,  7);
+    for (int k = 0; k < 7; k++) { nd.spark12h[k] = i8(s12[k]); nd.spark7d[k] = i8(s7[k]); }
+  }
+}
+
+bool LocalRepository::lastStart(NodeId node, uint32_t& ts) const {
+  bool found = false;
+  for (uint16_t i = 0; i < log_.size(); i++) {
+    const PumpEvent& e = log_.at(i);
+    if (e.pumpId == (uint8_t)node && e.event == EV_START) { ts = e.ts; found = true; }
+  }
+  return found;
+}
+bool LocalRepository::lastStop(NodeId node, uint32_t& ts) const {
+  bool found = false;
+  for (uint16_t i = 0; i < log_.size(); i++) {
+    const PumpEvent& e = log_.at(i);
+    if (e.pumpId == (uint8_t)node && e.event == EV_STOP) { ts = e.ts; found = true; }
+  }
+  return found;
+}
+
+void LocalRepository::fillPumps(UiModel& m, uint32_t now) {
+  int active = 0;
+  for (int i = 0; i < 4; i++) {
+    Pump& p = m.pumps[i]; NodeId node = SOIL_NODES[i];
+    bool running = log_.isRunning((uint8_t)node, now);
+    float soil = store_.latest(node, M_SOIL); if (isnan(soil)) soil = 40;
+    p.zone = NODE_NAMES[i];
+    snprintf(s_nodeId[i], sizeof(s_nodeId[i]), "PUMP-20%d", i + 1);
+    p.nodeId = s_nodeId[i];
+    p.on = running; p.active = running;
+    p.currentPct = iround(soil); p.targetPct = SimSource::WET_TARGET; p.mode = "AUTO";
+    p.minutesToday = log_.minutesToday((uint8_t)node, now);
+    p.avgPerDay    = log_.avgPerDay((uint8_t)node, now, 7);
+    if (running) {
+      uint32_t since, dur = 0;
+      if (lastStart(node, since)) dur = (now > since) ? now - since : 0;
+      snprintf(s_statusLine[i], sizeof(s_statusLine[i]), "läuft · %02u:%02u",
+               (unsigned)(dur / 60), (unsigned)(dur % 60));
+      p.reason = "< Schwelle";
+    } else {
+      uint32_t stopTs;
+      if (lastStop(node, stopTs)) {
+        time_t t = (time_t)stopTs; struct tm tv; gmtime_r(&t, &tv);
+        snprintf(s_statusLine[i], sizeof(s_statusLine[i]), "zuletzt %02d:%02d", tv.tm_hour, tv.tm_min);
+      } else snprintf(s_statusLine[i], sizeof(s_statusLine[i]), "–");
+      p.reason = nullptr;
+    }
+    p.statusLine = s_statusLine[i];
+    if (running) active++;
+  }
+  m.activePumps = active;
+}
+
+UiModel LocalRepository::buildModel() {
+  uint32_t now = clock_.now();
+  UiModel m{};                       // zero-init; const char* fields set below
+  fillDateTime(m, now);
+  fillEnv(m, now);
+  fillChart(m, now);
+  fillNodes(m, now);
+  fillPumps(m, now);
+  m.hasAlert = false;
+  m.alertText = "STURMWARNUNG bis 20:00 · Böen 75 km/h";
+  return m;
+}
+
+void LocalRepository::togglePump(int index) {
+  if (index < 0 || index >= 4) return;
+  NodeId node = SOIL_NODES[index];
+  uint32_t now = clock_.now();
+  float soil = store_.latest(node, M_SOIL); if (isnan(soil)) soil = 40;
+  int16_t soilPct = (int16_t)lroundf(soil);
+  if (log_.isRunning((uint8_t)node, now))
+    log_.append({now, (uint8_t)node, EV_STOP,  soilPct, SimSource::WET_TARGET});
+  else
+    log_.append({now, (uint8_t)node, EV_START, soilPct, SimSource::DRY_THRESHOLD});
+}
+```
+Field-mapping note: `spark12h`/`spark7d` are `int8_t` and `chart.soilPct` is `int`, so `sampleWindow`'s `float` output is rounded/clamped (`i8`/`iround`). `gmtime_r` is available on both ESP32 newlib and host. `togglePump` records freshest soil + the active threshold into the event audit fields and write-through persists it (via the PumpLog sink wired in Chunk 9).
 
 - [ ] **Step 3: Verify it compiles for the device**
 
@@ -1827,60 +2052,75 @@ Replace the mock model with the live data layer: build the store with `SdStorage
 #include "PumpLog.h"
 #include "Clock.h"
 #include "SimSource.h"
+#include "InMemoryStorage.h"
 #include "data/SdStorage.h"
 #include "data/GardenRepository.h"
 
+// Arduino millis() returns `unsigned long`, which is a DISTINCT type from
+// uint32_t on the ESP32 toolchain — &millis won't bind to uint32_t(*)().
+// Wrap it so the Clock's function-pointer type matches.
+static uint32_t nowMillis() { return (uint32_t)millis(); }
+
 static SdStorage       s_sd;
-static InMemoryStorage s_ram;          // fallback when no card
+static InMemoryStorage s_ram;              // fallback when no card
+static SeriesStorage*  s_storage = nullptr;  // the active backend (sd or ram)
 static TimeSeriesStore s_store;
 static PumpLog         s_log;
-static Clock           s_clock(millis);
+static Clock           s_clock(nowMillis);
 static SimSource       s_sim;
 static IGardenRepository* s_repo = nullptr;
-static LocalRepository*   s_localRepo = nullptr;
 static uint32_t s_lastTickMs = 0;
-static const uint32_t TICK_MS = 900000;       // 15 min; lower via build flag for bench testing
+
+// Forward the PumpLog sink to whatever storage is active (mirrors the Series sink).
+static void pumpPersist(void* ctx, const PumpEvent& e) {
+  static_cast<SeriesStorage*>(ctx)->appendPumpEvent(e);
+}
+
+#ifndef TICK_MS
+#define TICK_MS 900000   // 15 min; build with -D TICK_MS=5000 for a fast bench demo
+#endif
 ```
 
 - [ ] **Step 2: Initialise in `display_controller_setup()`** (replace `g_model = mockModel();`):
 ```cpp
-  SeriesStorage* storage = s_sd.begin() ? (SeriesStorage*)&s_sd : (SeriesStorage*)&s_ram;
-  if (storage == (SeriesStorage*)&s_ram)
+  s_storage = s_sd.begin() ? (SeriesStorage*)&s_sd : (SeriesStorage*)&s_ram;
+  if (s_storage == (SeriesStorage*)&s_ram)
     Serial.println(F("SD: no card — running RAM-only (history will not persist)"));
-  s_store.init(storage);
+  s_store.init(s_storage);
+  s_log.setSink(pumpPersist, s_storage);       // pump events write through too
 
   uint32_t epoch;
-  if (storage->loadClock(epoch)) s_clock.setEpoch(epoch);
-  else s_clock.setEpoch(1750000000);          // first-boot baseline
+  if (s_storage->loadClock(epoch)) s_clock.setEpoch(epoch);
+  else s_clock.setEpoch(1750000000);           // first-boot baseline
 
   s_store.reload();                            // load any persisted rings
   PumpEvent evbuf[256];
-  int ne = storage->loadPumpEvents(evbuf, 256);
-  for (int i = 0; i < ne; i++) s_log.append(evbuf[i]);
+  int ne = s_storage->loadPumpEvents(evbuf, 256);
+  for (int i = 0; i < ne; i++) s_log.appendDirect(evbuf[i]);   // RAM only, no re-persist
 
   bool empty = !s_store.find(ts::NODE_BEET1, ts::M_SOIL)->hasData();
   if (empty) {
     Serial.println(F("Store empty — seeding ~30 d history"));
-    s_sim.seed(s_store, s_log, s_clock.now());
+    s_sim.seed(s_store, s_log, s_clock.now());  // pump events persist via the sink
+    s_store.persistAll();                       // persist the seeded ring contents once
   }
 
   static LocalRepository repo(s_store, s_log, s_clock);
-  s_localRepo = &repo; s_repo = &repo;
+  s_repo = &repo;
   g_model = s_repo->buildModel();
 ```
 
-- [ ] **Step 3: Run the simulator + clock persistence in `display_controller_loop()`** (near the top, before button handling):
+- [ ] **Step 3: Run the simulator + clock persistence in `display_controller_loop()`** — insert this block immediately **after** the existing `bool pageChanged = false; bool inPageChanged = false;` declarations (so `pageChanged` is in scope), before the Menu/Exit handling:
 ```cpp
   uint32_t ms = millis();
   if (ms - s_lastTickMs >= TICK_MS) {
     s_lastTickMs = ms;
     s_sim.tick(s_store, s_log, s_clock.now());
-    static_cast<SeriesStorage*>(&s_sd)->saveClock(s_clock.now()); // no-op if RAM-only
+    s_storage->saveClock(s_clock.now());       // active backend (no-op when RAM-only)
     g_model = s_repo->buildModel();
     pageChanged = true;                        // refresh with fresh data
   }
 ```
-(Declare `bool pageChanged = false;` earlier as today; ensure the tick path triggers a full refresh.)
 
 - [ ] **Step 4: Route the CONF toggle through the repository** — replace the `if (eConf) { ... }` body:
 ```cpp
@@ -1919,7 +2159,7 @@ Expected on first boot: `SD: ...`, `Store empty — seeding ~30 d history`; on s
 
 - [ ] **Step 5: Verify persistence** — power-cycle the panel; confirm it does NOT re-seed (serial shows reload, not seed) and the pages render the previously stored history. Pop the card and reboot to confirm the RAM-only fallback path runs without crashing.
 
-- [ ] **Step 6 (optional bench check):** temporarily build with a small `-D TICK_MS_OVERRIDE` (or lower `TICK_MS`) so samples flow every few seconds, and watch a soil value drift + a pump trigger live. Revert before final flash.
+- [ ] **Step 6 (optional bench check):** temporarily build with `-D TICK_MS=5000` (the `#ifndef` guard lets the flag win) so samples flow every few seconds, and watch a soil value drift + a pump trigger live. Rebuild without the flag before the final flash.
 
 - [ ] **Step 7: Update the project log.** Append a dated entry to `docs/memory.md` summarising Mission 2 (what shipped, the SD layout, the SD CS pin, any bring-up gotchas) and tick the Mission 2 checkbox. Commit.
 ```bash
@@ -1933,4 +2173,5 @@ git commit -m "Mission 2: log completion + bring-up notes"
 - `~/.platformio/penv/bin/pio test -e native_test` — all suites PASS.
 - `sim/preview.sh` renders the three pages from simulated data (no mock model).
 - Device boots, seeds on first run, reloads on later runs, survives a missing card, runs the simulator, and navigation + pump toggle work on the panel.
+- Pump-event persistence round-trips: toggle a pump on the panel, power-cycle, and confirm the running state + minutes-today survive (events reloaded from `/garden/pumps.log`).
 - `mockModel()` is no longer referenced by `host_preview.cpp` or `display_controller_app.cpp` (it may remain in the tree as reference data; note it in the log if kept).
