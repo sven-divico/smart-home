@@ -56,7 +56,7 @@ Mirrors how `Canvas1` is kept pure and host-testable:
 
 ### 3.1 Records (fixed-size, binary)
 - **Raw record:** `{ uint32_t ts; int16_t value; }` = 6 B.
-  `value` is fixed-point per series (each `Series` carries a `scale`): soil% ×1, air/soil temp ×10, pressure ×1, humidity ×1, lux ×¼.
+  `value` is fixed-point per series (each `Series` carries a `scale`): soil% ×1, air/soil temp ×10, pressure ×1, humidity ×1, lux ×¼. The ×¼ lux scale keeps even full daylight in range: ~100k lux ÷ 4 = 25 000 < `int16_t` ceiling (32 767), so bright sun cannot silently overflow.
 - **Daily record:** `{ uint32_t ts; int16_t avg; }` = 6 B.
 - **Ring file header:** `magic · version · recordSize · capacity · head · count`.
 
@@ -93,6 +93,8 @@ What the repository calls (windows: 12 h reads from the raw ring; 7 d / month fr
 ## 5. Repository & derived values
 `IGardenRepository` exposes `UiModel buildModel()` plus a pump-toggle method. `LocalRepository` implements it over `TimeSeriesStore` + `PumpLog`. **Computed on read, never stored:** soil Ø across nodes, pressure trend, day high/low, "feels like" (temp+humidity), weather glyph (sun/cloud/rain/moon), "dry" flag (soil < threshold), pump minutes-today & avg/day.
 
+`buildModel()` must populate **every** field of the existing `UiModel` (`src/ui/ui_model.h`): `latest()` → current values; `sampleWindow(...,7)` → `ChartSeries` and the per-node `spark12h`/`spark7d` arrays; `averageAcrossNodes` → chart soil bars; `minMaxToday` → `dayLoC`/`dayHiC`; `trend` → `pressureTrend`. **Exception:** `hasAlert` / `alertText` are not data-driven this mission — they stay hardcoded constants (storm-warning source is out of scope). `dateLine`/`clock` come from `now()`.
+
 ## 6. High-resolution sampling while a pump runs
 
 Separates **control** (when to stop the pump) from **storage** (what's persisted). One tier finer than raw, transient:
@@ -107,7 +109,7 @@ DAILY — 1/day, persisted, ~400 d
 ```
 
 - The fine tier is a small RAM-only buffer; it is **not persisted**. `latest()` returns its freshest sample so the pump stops within ~30 s instead of up to 15 min (less overwatering).
-- It rolls up into the existing 15-min raw point — **no new persisted tier, no SD-format change**.
+- It rolls up into the existing 15-min raw point — **no new persisted tier, no SD-format change**. **Rollup rule:** the raw point is the **average of every sample collected during that 15-min window**, regardless of source — idle 15-min reads and any 30 s fine samples are pooled equally. A pump that starts partway through a window simply contributes more samples to that window's average; partial windows are averaged over whatever samples they actually contain.
 - Adaptive cadence: a node bursts to 30 s only while its pump is active (matches real low-power sensor-node behavior later).
 - **Deferred (YAGNI):** persisting the 30 s detail for "zoom into a watering event" — add a short-retention fine ring behind the same interface if ever wanted.
 
@@ -122,12 +124,12 @@ PumpEvent { uint32_t ts; uint8_t pumpId; uint8_t event /*START|STOP*/;
 
 - `soilPct` = freshest soil reading for the zone at the event moment (from the fine tier).
 - `thresholdPct` = the threshold in effect **at that time** — the dry-threshold on START, the target on STOP. Stored so adherence can be audited *as specified* even after thresholds are later re-tuned in config.
-- `minutes-today` and `avg/day` are computed by pairing START/STOP on read. Current on / active / mode / target live in the snapshot.
+- `minutes-today` and `avg/day` are computed by pairing START/STOP on read. A **dangling START** (pump still running, or a STOP lost to a reboot) is treated as *running until `now()`* for the duration calc, which also keeps the snapshot's active/running state correct. Current on / active / mode / target live in the snapshot.
 - The Page-3 CONF toggle writes a pump event via the repository instead of mutating a model copy.
 
 ## 8. Clock, persistence & resilience
 
-- **`Clock`:** epoch baseline (first boot from a compile-time constant) advanced by `millis()`; baseline persisted to `/garden/clock.dat` periodically so reboots resume roughly where they left off. All time read through `now()`; later swap the source to gateway `MSG_TIME_SYNC` / NTP behind the same call. The 12 h / 7 d / month windows are relative to `now()`, so they work even if absolute time drifts.
+- **`Clock`:** epoch baseline (first boot from a compile-time constant) advanced by `millis()`; baseline persisted to `/garden/clock.dat` **on every raw write** (~15 min) so a power loss rewinds the clock by at most one raw interval. All time read through `now()`; later swap the source to gateway `MSG_TIME_SYNC` / NTP behind the same call. The 12 h / 7 d / month windows are relative to `now()`, so they work even if absolute time drifts.
 - **Write-through:** each sample updates the RAM ring and its SD slot (15-min cadence → trivial I/O).
 - **No card / corrupt card:** log a warning and run **RAM-only** (seed in RAM, no persistence); the display still works.
 - **SD layout:** `/garden/<node>_<metric>_raw.bin`, `_daily.bin`, `pumps.log`, `clock.dat`.
