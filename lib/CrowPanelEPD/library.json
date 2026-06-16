@@ -1,0 +1,9 @@
+{
+  "name": "CrowPanelEPD",
+  "version": "0.1.0",
+  "description": "Low-level driver for the Elecrow CrowPanel ESP32 5.79\" e-paper panel (dual SSD1683, 792x272, bit-banged SPI). Vendored third-party code — see ATTRIBUTION.md.",
+  "keywords": "epaper, ssd1683, crowpanel, elecrow",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "license": "MIT"
+}

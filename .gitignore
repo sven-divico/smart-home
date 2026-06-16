@@ -1,0 +1,22 @@
+# PlatformIO
+.pio/
+
+# Secrets (commit only secrets.example.h)
+include/secrets.h
+
+# VS Code noise
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+
+# Brainstorm visual-companion scratch
+.superpowers/
+
+# Host simulator build / output
+sim/build/
+*.png
+*.pgm
+
+# OS
+.DS_Store
