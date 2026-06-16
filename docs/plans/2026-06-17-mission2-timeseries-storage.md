@@ -1807,7 +1807,7 @@ static const NodeId SOIL_NODES[4] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GE
 
 // string storage for the const char* fields of one UiModel
 static char s_dateLine[48], s_clockLong[16], s_clock[8];
-static char s_nodeId[4][12], s_statusLine[4][24];
+static char s_nodeId[4][12], s_statusLine[4][32];  // 32 leaves margin for long "läuft · MMM:SS"
 
 static int    iround(float v) { return (int)lroundf(v); }
 static int8_t i8(float v) { if (v < -128) v = -128; if (v > 127) v = 127; return (int8_t)lroundf(v); }
