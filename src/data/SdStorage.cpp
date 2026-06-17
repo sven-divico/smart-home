@@ -5,7 +5,12 @@
 #include <string.h>
 using namespace ts;
 
-static const int SD_CS = 10;   // TODO(Chunk 9): confirm against Elecrow CrowPanel pinout
+// CrowPanel 5.79" microSD is on its OWN SPI bus (separate from the bit-banged
+// e-paper on 12/11). Confirmed against the Elecrow wiki pinout (2026-06-17).
+static const int SD_CS   = 10;
+static const int SD_SCK  = 39;
+static const int SD_MOSI = 40;
+static const int SD_MISO = 13;
 static const uint16_t MAGIC = 0xC1A0;
 
 #pragma pack(push,1)
@@ -14,7 +19,10 @@ struct RingHeader { uint16_t magic; uint8_t version; uint8_t recordSize;
 #pragma pack(pop)
 
 bool SdStorage::begin() {
-  if (!SD.begin(SD_CS)) { ok_ = false; return false; }
+  // Must bind SPI to the SD bus pins first — SD.begin(cs) alone uses the default
+  // SPI pins, which are NOT the SD slot's on this board, and would silently fail.
+  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, SPI)) { ok_ = false; return false; }
   SD.mkdir("/garden");
   ok_ = true;
   return true;
