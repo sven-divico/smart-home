@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <driver/gpio.h>
 #include <string.h>
 using namespace ts;
 
@@ -24,6 +25,9 @@ struct RingHeader { uint16_t magic; uint8_t version; uint8_t recordSize;
 
 bool SdStorage::begin() {
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  // SD DAT0/MISO must idle HIGH for the card to answer in SPI mode. If the board
+  // has no external pull-up, CMD0 gets "no token" — enable the internal one.
+  gpio_pullup_en((gpio_num_t)SD_MISO);
   if (!SD.begin(SD_CS, sdSPI)) { ok_ = false; return false; }
   SD.mkdir("/garden");
   ok_ = true;

@@ -144,6 +144,14 @@ void display_controller_setup() {
   pinMode(PIN_CONF, INPUT_PULLUP);
   pinMode(PIN_UP,   INPUT_PULLUP);
 
+  // Enable the peripheral power rail (GPIO 7) FIRST. It powers the e-paper, and the
+  // microSD slot appears to share it — so SD.begin() must run AFTER this or the card
+  // is unpowered and never completes its SPI init.
+  Serial.println(F("Power: enabling peripheral rail (GPIO 7)"));
+  pinMode(EPD_POWER_PIN, OUTPUT);
+  digitalWrite(EPD_POWER_PIN, HIGH);
+  delay(100);
+
   s_storage = s_sd.begin() ? (SeriesStorage*)&s_sd : (SeriesStorage*)&s_ram;
   if (s_storage == (SeriesStorage*)&s_ram)
     Serial.println(F("SD: no card — running RAM-only (history will not persist)"));
@@ -173,11 +181,7 @@ void display_controller_setup() {
   s_repo = &repo;
   g_model = s_repo->buildModel();
 
-  Serial.println(F("EPD: enabling panel power rail (GPIO 7)"));
-  pinMode(EPD_POWER_PIN, OUTPUT);
-  digitalWrite(EPD_POWER_PIN, HIGH);
-  delay(100);
-  EPD_GPIOInit();
+  EPD_GPIOInit();   // power rail already enabled at the top of setup()
 
   Serial.println(F("Nav: Menu=prev  Exit=next  |  Page 3: wheel Up/Down=focus, CONF=toggle"));
   drawFull();  // initial render (Main)
