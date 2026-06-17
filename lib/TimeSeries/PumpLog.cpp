@@ -9,6 +9,8 @@ uint32_t PumpLog::runSeconds(uint8_t pumpId, uint32_t from, uint32_t now) const 
   for (uint16_t i = 0; i < ring_.size(); i++) {
     const PumpEvent& e = ring_.at(i);
     if (e.pumpId != pumpId) continue;
+    // Consecutive STARTs (e.g. a duplicate after a reboot) take the latest ts;
+    // the earlier un-stopped run is intentionally dropped rather than guessed at.
     if (e.event == EV_START) { open = true; startTs = e.ts; }
     else if (e.event == EV_STOP && open) {
       uint32_t a = startTs < from ? from : startTs;

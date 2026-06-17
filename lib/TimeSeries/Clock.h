@@ -7,7 +7,9 @@
 class Clock {
 public:
   explicit Clock(uint32_t (*millisFn)());
-  void setEpoch(uint32_t epochSeconds);  // rebase: this epoch == "right now"
+  // Rebase: this epoch == "right now". Call at least every ~49 days — uint32_t
+  // millis wraps at 2^32 ms (~49.7 d), after which an un-rebased now() drifts.
+  void setEpoch(uint32_t epochSeconds);
   uint32_t now() const;                  // current epoch seconds
   uint32_t baseEpoch() const { return baseEpoch_; }
 
