@@ -9,8 +9,8 @@ public:
   Ring(Sample* buf, uint16_t capacity);
   void push(const Sample& s);
   uint16_t size() const;            // min(count, capacity)
-  const Sample& at(uint16_t i) const;
-  const Sample& newest() const;
+  const Sample& at(uint16_t i) const;  // precondition: i < size()
+  const Sample& newest() const;        // precondition: !empty()
   bool empty() const { return count_ == 0; }
 
   // Persistence helpers: head/count are the only mutable state beyond the buffer.
@@ -23,5 +23,5 @@ private:
   Sample*  buf_;
   uint16_t cap_;
   uint16_t head_  = 0;  // next write index
-  uint16_t count_ = 0;  // total pushes, saturates at cap_
+  uint16_t count_ = 0;  // live sample count, saturates at cap_
 };

@@ -28,6 +28,7 @@ static void test_load_restores_state() {
   r.load(/*head=*/2, /*count=*/2);
   TEST_ASSERT_EQUAL_UINT16(2, r.size());
   TEST_ASSERT_EQUAL_UINT32(10, r.at(0).ts);
+  TEST_ASSERT_EQUAL_UINT32(20, r.at(1).ts);   // exercise the (start+i) path, not just start
 }
 
 int main(int, char **) {
