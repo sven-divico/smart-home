@@ -6,12 +6,16 @@
 using namespace ts;
 
 // CrowPanel 5.79" microSD is on its OWN SPI bus (separate from the bit-banged
-// e-paper on 12/11). Confirmed against the Elecrow wiki pinout (2026-06-17).
+// e-paper on 12/11). Pins confirmed against the Elecrow wiki + example (2026-06-17).
 static const int SD_CS   = 10;
 static const int SD_SCK  = 39;
 static const int SD_MOSI = 40;
 static const int SD_MISO = 13;
 static const uint16_t MAGIC = 0xC1A0;
+
+// Elecrow's example drives the SD on a dedicated HSPI instance (the global `SPI`
+// is FSPI on the S3). Using the global object here fails card init ("no token").
+static SPIClass sdSPI(HSPI);
 
 #pragma pack(push,1)
 struct RingHeader { uint16_t magic; uint8_t version; uint8_t recordSize;
@@ -19,10 +23,8 @@ struct RingHeader { uint16_t magic; uint8_t version; uint8_t recordSize;
 #pragma pack(pop)
 
 bool SdStorage::begin() {
-  // Must bind SPI to the SD bus pins first — SD.begin(cs) alone uses the default
-  // SPI pins, which are NOT the SD slot's on this board, and would silently fail.
-  SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  if (!SD.begin(SD_CS, SPI)) { ok_ = false; return false; }
+  sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, sdSPI)) { ok_ = false; return false; }
   SD.mkdir("/garden");
   ok_ = true;
   return true;
