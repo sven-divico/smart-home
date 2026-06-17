@@ -25,6 +25,7 @@ private:
   // Reuse Ring's index math via a tiny inline ring of PumpEvent.
   struct EvtRing {
     PumpEvent* b; uint16_t cap, head = 0, count = 0;
+    EvtRing(PumpEvent* buf, uint16_t c) : b(buf), cap(c) {}
     void push(const PumpEvent& e){ b[head]=e; head=(head+1)%cap; if(count<cap)count++; }
     uint16_t size() const { return count<cap?count:cap; }
     const PumpEvent& at(uint16_t i) const {
