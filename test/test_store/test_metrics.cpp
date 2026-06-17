@@ -1,6 +1,7 @@
 #include <unity.h>
 #include "metrics.h"
 #include "TimeSeriesStore.h"
+#include "InMemoryStorage.h"
 using namespace ts;
 
 void setUp() {} void tearDown() {}
@@ -86,6 +87,19 @@ static void test_trend_rising() {
   TEST_ASSERT_EQUAL_INT(1, store.trend(NODE_ENV, M_PRESSURE, now));
 }
 
+// --- Task 6.2: write-through persistence ---
+
+static void test_writethrough_persists_finalized_points() {
+  InMemoryStorage st; st.begin();
+  TimeSeriesStore store; store.init(&st);
+  store.add(NODE_BEET1, M_SOIL, 0, encode(M_SOIL, 40));
+  store.add(NODE_BEET1, M_SOIL, RAW_INTERVAL_S + 1, encode(M_SOIL, 50)); // finalizes window @0
+  Sample out[8];
+  int n = st.loadRing(NODE_BEET1, M_SOIL, false, out, 8);
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_INT16(40, out[0].value);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   // Task 1.2: encode/decode
@@ -100,5 +114,7 @@ int main(int, char **) {
   RUN_TEST(test_average_across_nodes);
   RUN_TEST(test_min_max_today);
   RUN_TEST(test_trend_rising);
+  // Task 6.2: write-through persistence
+  RUN_TEST(test_writethrough_persists_finalized_points);
   return UNITY_END();
 }

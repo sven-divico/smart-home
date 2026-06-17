@@ -2,12 +2,13 @@
 #include <stdint.h>
 #include "Series.h"
 #include "metrics.h"
+#include "SeriesStorage.h"
 
 // Registry of Series keyed by (node, metric) + the aggregate queries the
 // repository needs. Holds Series by value in a fixed array (no dynamic memory).
 class TimeSeriesStore {
 public:
-  void init();                          // register every series in the registry
+  void init(SeriesStorage* storage = nullptr);  // register every series in the registry
   int  seriesCount() const { return count_; }
   Series* find(ts::NodeId node, ts::Metric metric);
   const Series* find(ts::NodeId node, ts::Metric metric) const;
@@ -25,6 +26,9 @@ public:
                    float& outMin, float& outMax) const;
   int trend(ts::NodeId node, ts::Metric metric, uint32_t now) const; // -1/0/+1
 
+  void reload();       // load persisted rings from storage into the series
+  void persistAll();   // flush all ring contents to storage (used after seeding)
+
 private:
   static const int MAX_SERIES = 16;
   struct Key { ts::NodeId node; ts::Metric metric; };
@@ -33,4 +37,6 @@ private:
   // Series are non-copyable in practice (big buffers); store in a fixed pool.
   alignas(Series) unsigned char pool_[MAX_SERIES][sizeof(Series)];
   int count_ = 0;
+  SeriesStorage* storage_ = nullptr;
+  static void sinkTrampoline(void* ctx, ts::NodeId, ts::Metric, bool daily, const Sample&);
 };

@@ -5,13 +5,53 @@ using namespace ts;
 
 // Call once (the store is a program-lifetime singleton). Re-calling would
 // placement-new over already-constructed Series — don't.
-void TimeSeriesStore::init() {
+void TimeSeriesStore::init(SeriesStorage* storage) {
+  storage_ = storage;
   int n; const SeriesCfg* cfg = registry(n);
   count_ = 0;
   for (int i = 0; i < n && count_ < MAX_SERIES; i++) {
     keys_[count_] = {cfg[i].node, cfg[i].metric};
     series_[count_] = new (pool_[count_]) Series(cfg[i].metric, cfg[i].hasDaily);
+    series_[count_]->setSink(&TimeSeriesStore::sinkTrampoline, this, cfg[i].node);
     count_++;
+  }
+}
+
+void TimeSeriesStore::sinkTrampoline(void* ctx, NodeId n, Metric m, bool daily, const Sample& s) {
+  auto* self = static_cast<TimeSeriesStore*>(ctx);
+  if (self->storage_) self->storage_->appendSample(n, m, daily, s);
+}
+
+void TimeSeriesStore::reload() {
+  if (!storage_) return;
+  Sample buf[DAILY_CAP];
+  for (int i = 0; i < count_; i++) {
+    NodeId n = keys_[i].node; Metric m = keys_[i].metric;
+    int nr = storage_->loadRing(n, m, false, buf, RAW_CAP);
+    for (int k = 0; k < nr; k++) series_[i]->pushRawDirect(buf[k]);
+    if (series_[i]->hasDaily()) {
+      int nd = storage_->loadRing(n, m, true, buf, DAILY_CAP);
+      for (int k = 0; k < nd; k++) series_[i]->pushDailyDirect(buf[k]);
+    }
+  }
+}
+
+// Persist the entire current contents of every ring to storage (one-time, after
+// seeding). Live points persist automatically via the Series sink; seeded points
+// are inserted with pushRawDirect (no sink), so they need this explicit flush.
+// Note: with the per-slot SdStorage this re-opens each file per sample, so first-
+// boot seeding takes a few seconds — acceptable as a one-time cost; a bulk
+// saveRing() could be added later if it becomes annoying.
+void TimeSeriesStore::persistAll() {
+  if (!storage_) return;
+  for (int i = 0; i < count_; i++) {
+    NodeId n = keys_[i].node; Metric m = keys_[i].metric;
+    const Ring& r = series_[i]->raw();
+    for (uint16_t k = 0; k < r.size(); k++) storage_->appendSample(n, m, false, r.at(k));
+    if (series_[i]->hasDaily()) {
+      const Ring& d = series_[i]->daily();
+      for (uint16_t k = 0; k < d.size(); k++) storage_->appendSample(n, m, true, d.at(k));
+    }
   }
 }
 

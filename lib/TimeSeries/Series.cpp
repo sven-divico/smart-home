@@ -21,6 +21,7 @@ void Series::finalizeWindow() {
   int16_t avg = (int16_t)(windowSum_ / windowCount_);
   uint32_t windowStart = windowKey_ * RAW_INTERVAL_S;
   raw_.push({windowStart, avg});
+  if (sink_) sink_(sinkCtx_, node_, metric_, false, {windowStart, avg});
   haveWindow_ = false;
 
   if (hasDaily_) {
@@ -35,6 +36,7 @@ void Series::finalizeWindow() {
 void Series::finalizeDay() {
   int16_t avg = (int16_t)(daySum_ / dayCount_);
   daily_.push({dayKey_ * DAY_S, avg});
+  if (sink_) sink_(sinkCtx_, node_, metric_, true, {dayKey_ * DAY_S, avg});
   haveDay_ = false;
 }
 

@@ -28,6 +28,9 @@ public:
   Ring& rawMutable() { return raw_; }      // for storage load
   Ring& dailyMutable() { return daily_; }
 
+  using Sink = void(*)(void* ctx, ts::NodeId, ts::Metric, bool daily, const Sample&);
+  void setSink(Sink fn, void* ctx, ts::NodeId node) { sink_ = fn; sinkCtx_ = ctx; node_ = node; }
+
 private:
   void finalizeWindow();
   void finalizeDay();
@@ -55,4 +58,8 @@ private:
 
   Sample last_{0, 0};        // freshest sample seen (for latest())
   bool   haveLast_ = false;
+
+  Sink  sink_ = nullptr;
+  void* sinkCtx_ = nullptr;
+  ts::NodeId node_ = ts::NODE_COUNT;
 };
