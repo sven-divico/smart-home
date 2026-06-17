@@ -10,7 +10,7 @@ static const NodeId SOIL_NODES[4] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GE
 
 // string storage for the const char* fields of one UiModel
 static char s_dateLine[48], s_clockLong[16], s_clock[8];
-static char s_nodeId[4][12], s_statusLine[4][32];  // 32 leaves margin for long "läuft · MMM:SS"
+static char s_nodeId[4][12], s_statusLine[4][32];  // 32 leaves margin for long "läuft · MM:SS"
 
 static int    iround(float v) { return (int)lroundf(v); }
 static int8_t i8(float v) { if (v < -128) v = -128; if (v > 127) v = 127; return (int8_t)lroundf(v); }
@@ -104,7 +104,7 @@ void LocalRepository::fillPumps(UiModel& m, uint32_t now) {
     p.minutesToday = log_.minutesToday((uint8_t)node, now);
     p.avgPerDay    = log_.avgPerDay((uint8_t)node, now, 7);
     if (running) {
-      uint32_t since, dur = 0;
+      uint32_t since = 0, dur = 0;   // init: lastStart always succeeds while running, but keep it defined
       if (lastStart(node, since)) dur = (now > since) ? now - since : 0;
       snprintf(s_statusLine[i], sizeof(s_statusLine[i]), "läuft · %02u:%02u",
                (unsigned)(dur / 60), (unsigned)(dur % 60));
@@ -131,7 +131,7 @@ UiModel LocalRepository::buildModel() {
   fillChart(m, now);
   fillNodes(m, now);
   fillPumps(m, now);
-  m.hasAlert = false;
+  m.hasAlert = false;  // TODO(later mission): wire a real alert source; alertText unused while false
   m.alertText = "STURMWARNUNG bis 20:00 · Böen 75 km/h";
   return m;
 }

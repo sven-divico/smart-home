@@ -47,10 +47,13 @@ int main(int argc, char **argv) {
   char path[512];
 
   renderMain(canvas, m);
-  snprintf(path, sizeof(path), "%s/main.pgm", outDir); writePGM(canvas, path);
+  snprintf(path, sizeof(path), "%s/main.pgm", outDir);
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
   renderDetail(canvas, m);
-  snprintf(path, sizeof(path), "%s/detail.pgm", outDir); writePGM(canvas, path);
+  snprintf(path, sizeof(path), "%s/detail.pgm", outDir);
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
   renderActuators(canvas, m, 1);
-  snprintf(path, sizeof(path), "%s/actuators.pgm", outDir); writePGM(canvas, path);
+  snprintf(path, sizeof(path), "%s/actuators.pgm", outDir);
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
   return 0;
 }
