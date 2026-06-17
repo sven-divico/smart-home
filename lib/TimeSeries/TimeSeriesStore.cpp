@@ -3,6 +3,8 @@
 #include <new>
 using namespace ts;
 
+// Call once (the store is a program-lifetime singleton). Re-calling would
+// placement-new over already-constructed Series — don't.
 void TimeSeriesStore::init() {
   int n; const SeriesCfg* cfg = registry(n);
   count_ = 0;
@@ -75,10 +77,14 @@ int TimeSeriesStore::sampleWindow(NodeId node, Metric metric, Window w,
 
 int TimeSeriesStore::averageAcrossNodes(Metric metric, Window w, uint32_t now,
                                         float* out, int nPoints) const {
+  // tmp is a fixed per-node scratch buffer; clamp nPoints so a large request can
+  // never write past it (stack corruption on-device). Callers use ≤ 30 in practice.
+  static const int TMP_CAP = 64;
+  if (nPoints > TMP_CAP) nPoints = TMP_CAP;
   const NodeId soilNodes[] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS};
   for (int b = 0; b < nPoints; b++) out[b] = 0.0f;
   int contributors = 0;
-  float tmp[64];
+  float tmp[TMP_CAP];
   for (NodeId n : soilNodes) {
     if (sampleWindow(n, metric, w, now, tmp, nPoints) == nPoints) {
       for (int b = 0; b < nPoints; b++) out[b] += tmp[b];
