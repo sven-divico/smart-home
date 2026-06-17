@@ -2,6 +2,15 @@
 
 Running log of decisions and state. Newest first.
 
+## 2026-06-17 — Mission 2: local time-series storage ✅ (RAM-validated; SD slot defective on this unit)
+Replaced the mock `UiModel` with a real time-series data layer, built via subagent-driven development (9 chunks, each spec + code-quality reviewed, plus a whole-system review).
+- **Architecture:** pure host-testable core in `lib/TimeSeries/` (`Ring` → `Series` [raw 15-min/48h + daily/400d, downsample-on-write] → `TimeSeriesStore` [registry + queries: latest/sampleWindow/averageAcrossNodes/minMaxToday/trend] · `Clock` [soft, injected millis] · `PumpLog` [run pairing, dangling-START, audit fields] · `SeriesStorage` iface + `InMemoryStorage` · `SimSource`). Device glue in `src/data/`: `SdStorage` (binary ring files on µSD, device-only) + `GardenRepository` (builds `UiModel` — the **cloud-ready seam**; later swap for a `CachedCloudRepository`, UI unchanged).
+- **Data model:** binary fixed records `{uint32 ts; int16 value}` (6 B), fixed-point per metric (temp ×10, lux ÷4, rest ×1). Multi-resolution rings, downsample-on-write. Pump events `{ts,pumpId,event,soilPct,thresholdPct}` (self-contained audit). 30s fine sampling while pumping rolls up into the 15-min raw average (control vs storage separated).
+- **Persistence flow:** seed (`pushRawDirect`, no sink) + `persistAll` → reload (`pushRawDirect`, no sink) → live `tick` (`add`, fires sink → SD). Write-through via a function-pointer sink on Series/PumpLog; RAM-only fallback when no SD. Soft clock persisted to SD.
+- **Verified:** 30 native Unity tests (`pio test -e native_test`, suites in `test/`); host preview renders the real 3 pages from the simulated store (`sim/preview.sh`); device boots, seeds ~30 d, renders all 3 pages on the panel (RAM-only). RAM 58% / Flash 12%.
+- **Whole-system review caught** a cross-component bug: `SimSource` private pump flags desynced from a reloaded `PumpLog` on reboot-while-watering → duplicate START; fixed by making the log the single source of truth. Open follow-ups (task chips): SD pump-log reload should read newest-256 not oldest; first-boot seed→SD `persistAll` isn't crash-safe (consider bulk `saveRing` + a `seeded.flag`).
+- **SD bring-up + DEFECT:** µSD is its own SPI bus — CS **10**, SCK **39**, MOSI **40**, MISO **13** (Elecrow wiki/example), driven on a dedicated `SPIClass(HSPI)`; needs `gpio_pullup_en(MISO)` + power rail (GPIO 7) enabled before `SD.begin`. 64 GB cards ship exFAT → must reformat **FAT32** (`diskutil eraseDisk FAT32 …`). **This unit's SD slot is defective:** a known-good FAT32 card (mounts on Mac) fails SPI init (`no token` / `Card Failed cmd 0x37/0x29` / `APP_OP_COND failed: 255`) even with all of the above + pull-ups on MISO/MOSI/CS — internal MISO pull-up only gets CMD0 through, CMD55 still fails → bad MISO line/joint. Warranty report: `docs/sd-slot-defect-report-2026-06-17.md`. SD firmware is correct; will work on a healthy board.
+
 ## 2026-06-16 — Navigation + partial refresh (Mission 1, step 4) ✅ — Mission 1 DONE
 Buttons drive the UI on the panel; in-page changes use partial refresh.
 - **Inputs:** Exit=IO1 (next page), Menu=IO2 (prev page), rotary Up=IO6 / Down=IO4 / CONF=IO5. All `INPUT_PULLUP`, **active-low**, 25 ms debounce (`pressed()` edge detector). Confirmed working on hardware.
@@ -51,16 +60,15 @@ First pixels on the CrowPanel. Two non-obvious gotchas, both now in code:
 - Locale: German labels, DD.MM.YYYY, 24h, metric.
 - Mock UI data values are fixed in the spec §6 — reuse them consistently.
 
-## ▶ RESUME NEXT SESSION — Mission 1 DONE → polish or Mission 2
-Mission 1 is complete: 3 pages + navigation + partial refresh on the CrowPanel. Dev loop: edit `src/ui/pages.cpp`, run `sim/preview.sh`, view `build/preview/*@2x.png`; flash with `pio run -e display_controller -t upload --upload-port /dev/cu.usbserial-110`. Options next:
-1. **Polish pass** (deferred): visual tidy across the 3 pages; decide on the EIN/AUS toggle label; Picopixel `%` legibility.
-2. **Mission 2:** data structures + time-series storage (SD/LittleFS), ring buffers for 12 h / 7 d / 1 month — replaces the mock `UiModel`.
-3. **Refresh deepening** (optional): proper partial-refresh old-RAM/windowed handling if the occasional partial dimness becomes annoying.
+## ▶ RESUME NEXT SESSION — Missions 1 & 2 DONE
+Mission 2 merged to `main`: real time-series data layer behind a cloud-ready repository, validated on hardware (RAM-only — this unit's SD slot is defective, warranty report filed; SD code is correct for a healthy board). Dev loop unchanged: edit code, `sim/preview.sh`, view `build/preview/*@2x.png`; native tests `pio test -e native_test`; flash `pio run -e display_controller -t upload --upload-port /dev/cu.usbserial-10` (port suffix drifts — `ls /dev/cu.*`). Options next:
+1. **Get a board with a working SD slot** (or repair this one) and verify SD persistence end-to-end (reboot keeps history; pump-event round-trip).
+2. **Follow-up chips:** SdStorage pump-log reload newest-256; crash-safe first-boot seeding.
+3. **Mission 3 candidates:** ESP-NOW + a real sensor node (replace `SimSource` with live readings), or polish pass on the 3 pages.
 
 ## Missions
 - [x] **Mission 1:** PlatformIO foundation + 3 pages w/ mock data + navigation, deployed to CrowPanel. ✅
   - [x] step 1 — skeleton + role dispatch · [x] step 2 — first pixels (clean) · [x] step 3 — UI rendering (Main/Detail/Actuator on hardware, 180° rotation) · [x] step 4 — navigation (inputs + page switching + Page-3 cursor/CONF + partial refresh)
-- [ ] **Mission 2:** data structures + time-series storage (SD/LittleFS).
-- [ ] Later: ESP-NOW, sensor/pump/gateway nodes, Telegram, HA/ESPHome.
-- [ ] **Mission 2:** data structures + time-series storage (SD/LittleFS).
+- [x] **Mission 2:** data structures + time-series storage. ✅ (RAM-validated on hardware; SD persistence blocked by a defective SD slot on this unit — code correct, warranty report `docs/sd-slot-defect-report-2026-06-17.md`)
+  - [x] ch1 metrics/test env · [x] ch2 Ring · [x] ch3 Series · [x] ch4 Store+queries · [x] ch5 Clock+PumpLog · [x] ch6 persistence (iface/InMemory/SD/write-through) · [x] ch7 SimSource · [x] ch8 Repository+preview · [x] ch9 device integration
 - [ ] Later: ESP-NOW, sensor/pump/gateway nodes, Telegram, HA/ESPHome.
