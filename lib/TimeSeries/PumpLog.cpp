@@ -1,7 +1,10 @@
 #include "PumpLog.h"
 using namespace ts;
 
-void PumpLog::append(const PumpEvent& e) { ring_.push(e); }
+void PumpLog::append(const PumpEvent& e) {
+  ring_.push(e);
+  if (sink_) sink_(sinkCtx_, e);
+}
 
 uint32_t PumpLog::runSeconds(uint8_t pumpId, uint32_t from, uint32_t now) const {
   uint32_t total = 0;

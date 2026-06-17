@@ -10,6 +10,7 @@ public:
   static const uint16_t CAP = 256;
 
   void append(const PumpEvent& e);
+  void appendDirect(const PumpEvent& e) { ring_.push(e); }  // RAM only (reload)
   uint16_t size() const { return ring_.size(); }
   const PumpEvent& at(uint16_t i) const { return ring_.at(i); }
 
@@ -17,7 +18,12 @@ public:
   int  avgPerDay(uint8_t pumpId, uint32_t now, int days) const;
   bool isRunning(uint8_t pumpId, uint32_t now) const;
 
+  using Sink = void(*)(void* ctx, const PumpEvent&);
+  void setSink(Sink fn, void* ctx) { sink_ = fn; sinkCtx_ = ctx; }
+
 private:
+  Sink  sink_ = nullptr;
+  void* sinkCtx_ = nullptr;
   // Sum run-seconds for pumpId within [from, now]; dangling START runs to now.
   uint32_t runSeconds(uint8_t pumpId, uint32_t from, uint32_t now) const;
 

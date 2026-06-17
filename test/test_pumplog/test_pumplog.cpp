@@ -32,10 +32,26 @@ static void test_other_pump_isolated() {
   TEST_ASSERT_FALSE(log.isRunning(0, day + 12 * 3600));
 }
 
+// --- Task 6.4: sink + appendDirect ---
+
+static int g_sinkCount = 0;
+static void countingSink(void*, const PumpEvent&) { g_sinkCount++; }
+
+static void test_sink_fires_on_append_only() {
+  PumpLog log; g_sinkCount = 0;
+  log.setSink(countingSink, nullptr);
+  log.append({100, 0, EV_START, 30, 35});   // fires sink
+  log.appendDirect({200, 0, EV_STOP, 46, 45}); // RAM only, no sink
+  TEST_ASSERT_EQUAL_INT(1, g_sinkCount);
+  TEST_ASSERT_EQUAL_UINT16(2, log.size());
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_minutes_today_paired_run);
   RUN_TEST(test_dangling_start_counts_until_now);
   RUN_TEST(test_other_pump_isolated);
+  // Task 6.4: sink fires only on append, not appendDirect
+  RUN_TEST(test_sink_fires_on_append_only);
   return UNITY_END();
 }
