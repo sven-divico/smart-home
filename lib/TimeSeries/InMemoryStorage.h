@@ -14,6 +14,11 @@ public:
   bool loadClock(uint32_t& epoch) override { if (haveClock_) epoch = clock_; return haveClock_; }
 
 private:
+  // Each Buf is sized to DAILY_CAP (~2.4 KB) regardless of tier — simple but
+  // RAM-heavy: MAXB*2.4 KB lives in .bss even when SD is present and this fallback
+  // is unused. MAXB must stay >= the number of distinct (node,metric,daily) keys
+  // (currently 17: 12 raw + 5 daily). To reclaim internal SRAM later, lower MAXB
+  // toward ~20 and/or size non-daily Bufs to RAW_CAP.
   struct Buf { ts::NodeId n; ts::Metric m; bool daily; Sample s[ts::DAILY_CAP]; int count = 0; };
   static const int MAXB = 32;
   Buf  bufs_[MAXB]; int nbufs_ = 0;

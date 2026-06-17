@@ -63,7 +63,7 @@ static const uint8_t PIN_UP   = 6;   // rotary up    -> focus prev (page 3)
 // Full-panel framebuffer in the driver's native 800x272 layout (== Canvas1::FRAME_BYTES).
 static uint8_t s_frame[EPD_W * EPD_H / 8];
 
-// Runtime UI state (mutable copy of the mock model so CONF can flip pump states).
+// Runtime UI state — snapshot built by the repository; rebuilt on each tick or CONF toggle.
 static UiModel g_model;
 static int     g_page  = 0;   // 0 = Main, 1 = Detail, 2 = Actuators
 static int     g_focus = 0;   // highlighted pump row on Page 3
@@ -166,6 +166,9 @@ void display_controller_setup() {
     s_store.persistAll();                       // persist the seeded ring contents once
   }
 
+  // Function-local static: constructed once, lives for the program. s_repo is set
+  // here before loop() ever runs and stays valid for the program's lifetime, so
+  // loop()'s unconditional s_repo-> dereferences are safe (setup() has no early return).
   static LocalRepository repo(s_store, s_log, s_clock);
   s_repo = &repo;
   g_model = s_repo->buildModel();
