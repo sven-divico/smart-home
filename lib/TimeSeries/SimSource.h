@@ -21,5 +21,7 @@ private:
   float frand(float lo, float hi);           // deterministic LCG in [lo,hi]
   float soilBaseFor(ts::NodeId n) const;
   float diurnalTemp(uint32_t ts) const;
-  bool  pumpRunning_[ts::NODE_COUNT] = {false};
+  // No private running-state: the PumpLog is the single source of truth (matches
+  // LocalRepository::togglePump). A private flag would desync from a log restored
+  // on reboot-while-watering and append a duplicate START.
 };

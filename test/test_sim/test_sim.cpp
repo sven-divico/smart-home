@@ -42,10 +42,35 @@ static void test_tick_triggers_dry_pump() {
   TEST_ASSERT_TRUE(store.find(NODE_GEWAECHSHAUS, M_SOIL)->hasData());  // tick advanced the series
 }
 
+static int countStarts(PumpLog& log, NodeId node) {
+  int c = 0;
+  for (uint16_t i = 0; i < log.size(); i++) {
+    const PumpEvent& e = log.at(i);
+    if (e.pumpId == (uint8_t)node && e.event == EV_START) c++;
+  }
+  return c;
+}
+
+// Reboot-while-watering: the PumpLog is restored from disk showing a pump running,
+// but SimSource is fresh. tick() must read running-state from the log (not a private
+// flag) so it does NOT append a duplicate START for an already-running pump.
+static void test_tick_no_duplicate_start_when_log_says_running() {
+  TimeSeriesStore store; store.init(); PumpLog log; SimSource sim;
+  uint32_t now = 40 * DAY_S;
+  sim.seed(store, log, now);
+  log.append({now, (uint8_t)NODE_GEWAECHSHAUS, EV_START, 30, SimSource::DRY_THRESHOLD}); // dangling START
+  TEST_ASSERT_TRUE(log.isRunning(NODE_GEWAECHSHAUS, now));
+  int startsBefore = countStarts(log, NODE_GEWAECHSHAUS);
+  sim.tick(store, log, now + RAW_INTERVAL_S);
+  TEST_ASSERT_EQUAL_INT(startsBefore, countStarts(log, NODE_GEWAECHSHAUS)); // no duplicate START
+  TEST_ASSERT_TRUE(log.isRunning(NODE_GEWAECHSHAUS, now + RAW_INTERVAL_S));  // still running
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_seed_fills_daily_history);
   RUN_TEST(test_seed_is_deterministic);
   RUN_TEST(test_tick_triggers_dry_pump);
+  RUN_TEST(test_tick_no_duplicate_start_when_log_says_running);
   return UNITY_END();
 }

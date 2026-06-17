@@ -58,20 +58,19 @@ void SimSource::seed(TimeSeriesStore& store, PumpLog& log, uint32_t now) {
 void SimSource::tick(TimeSeriesStore& store, PumpLog& log, uint32_t now) {
   const NodeId soil[] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS};
   for (NodeId n : soil) {
+    bool running = log.isRunning((uint8_t)n, now);          // PumpLog is the source of truth
     float cur = store.latest(n, M_SOIL);
     if (isnan(cur)) cur = soilBaseFor(n);
-    float next = pumpRunning_[n] ? cur + frand(1.5f, 3.0f)   // watering raises soil
-                                 : cur - frand(0.2f, 0.8f);  // drying lowers it
+    float next = running ? cur + frand(1.5f, 3.0f)   // watering raises soil
+                         : cur - frand(0.2f, 0.8f);  // drying lowers it
     if (next < 5) next = 5; if (next > 95) next = 95;
     store.add(n, M_SOIL, now, encode(M_SOIL, next));
     store.add(n, M_SOIL_TEMP, now, encode(M_SOIL_TEMP, 17.0f + frand(-1, 1)));
 
     int16_t soilPct = (int16_t)lroundf(next);
-    if (!pumpRunning_[n] && soilPct < DRY_THRESHOLD) {
-      pumpRunning_[n] = true;
+    if (!running && soilPct < DRY_THRESHOLD) {
       log.append({now, (uint8_t)n, EV_START, soilPct, DRY_THRESHOLD});
-    } else if (pumpRunning_[n] && soilPct >= WET_TARGET) {
-      pumpRunning_[n] = false;
+    } else if (running && soilPct >= WET_TARGET) {
       log.append({now, (uint8_t)n, EV_STOP, soilPct, WET_TARGET});
     }
   }
