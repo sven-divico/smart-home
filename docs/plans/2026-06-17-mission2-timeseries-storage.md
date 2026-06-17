@@ -37,7 +37,7 @@
 
 **Tests (`test/`, one folder per suite — PlatformIO convention):**
 `test/test_ring/`, `test/test_series/`, `test/test_store/`, `test/test_clock/`, `test/test_pumplog/`, `test/test_sim/`.
-> PlatformIO compiles ALL `.cpp` in one `test_*` directory into a single binary with one `main()`. When a chunk says "create `test/test_store/test_store.cpp`" alongside an existing `test_store/test_metrics.cpp`, MERGE the new tests into the existing single-`main` file in that folder (one `setUp`/`tearDown`/`main`, all `RUN_TEST`s) — do not add a second `main()`. Same applies to Chunk 6's `test_storage.cpp` (merge into the `test_store` suite).
+> PlatformIO compiles ALL `.cpp` in one `test_*` directory into a single binary with one `main()`. When a chunk says "create `test/test_store/test_store.cpp`" alongside an existing `test_store/test_metrics.cpp`, either MERGE the new tests into the existing single-`main` file (one `setUp`/`tearDown`/`main`, all `RUN_TEST`s) OR put them in a fresh `test_*` directory with its own `main()` — never two `main()`s in one folder. (As built: Chunk 4 store tests merged into `test_store/test_metrics.cpp`; Chunk 6 `InMemoryStorage` tests live in their own `test_storage/` directory, while the store↔storage write-through/reload tests sit with the store suite.)
 
 ### Cross-cutting constants (defined once in `metrics.h`)
 ```cpp
