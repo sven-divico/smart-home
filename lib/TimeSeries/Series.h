@@ -36,7 +36,8 @@ private:
   bool       hasDaily_;
 
   Sample rawBuf_[ts::RAW_CAP];
-  Sample dailyBuf_[ts::DAILY_CAP];
+  Sample dailyBuf_[ts::DAILY_CAP];  // always present (~2.4 KB) even when !hasDaily_ —
+                                    // simplicity over saving RAM; fine on the S3's 8 MB PSRAM
   Ring   raw_;
   Ring   daily_;
 

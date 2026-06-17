@@ -16,6 +16,8 @@ void Series::add(uint32_t ts, int16_t value) {
 }
 
 void Series::finalizeWindow() {
+  // Integer division truncates toward zero. Bias ≤ 0.5 LSB (e.g. 0.05°C for
+  // temp); below sensor noise, so rounding isn't worth the cost. Same in finalizeDay.
   int16_t avg = (int16_t)(windowSum_ / windowCount_);
   uint32_t windowStart = windowKey_ * RAW_INTERVAL_S;
   raw_.push({windowStart, avg});

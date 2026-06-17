@@ -42,10 +42,20 @@ static void test_no_daily_when_disabled() {
   TEST_ASSERT_EQUAL_UINT16(0, s.dailySize());
 }
 
+static void test_latest_seed_and_empty_paths() {
+  Series s(M_SOIL, /*hasDaily=*/false);
+  TEST_ASSERT_EQUAL_INT16(0, s.latest());          // fresh series: branch 3 (no data)
+  s.pushRawDirect({100, encode(M_SOIL, 37)});      // seeding bypass leaves haveLast_ false
+  TEST_ASSERT_EQUAL_INT16(37, s.latest());         // branch 2: newest raw point
+  s.pushDailyDirect({0, encode(M_SOIL, 50)});      // no-op when hasDaily is false
+  TEST_ASSERT_EQUAL_UINT16(0, s.dailySize());
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_window_average_one_raw_point);
   RUN_TEST(test_day_rollup);
   RUN_TEST(test_no_daily_when_disabled);
+  RUN_TEST(test_latest_seed_and_empty_paths);
   return UNITY_END();
 }
