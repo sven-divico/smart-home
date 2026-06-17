@@ -34,10 +34,11 @@ void SdStorage::appendSample(NodeId n, Metric m, bool daily, const Sample& s) {
   if (f.size() >= (int)sizeof(h)) { f.seek(0); f.read((uint8_t*)&h, sizeof(h)); }
   else { h = {MAGIC, 1, (uint8_t)sizeof(Sample), cap, 0, 0}; }
   uint32_t slotOff = sizeof(h) + (uint32_t)h.head * sizeof(Sample);
-  f.seek(slotOff); f.write((const uint8_t*)&s, sizeof(Sample));
-  h.head = (h.head + 1) % cap;
-  if (h.count < cap) h.count++;
-  f.seek(0); f.write((const uint8_t*)&h, sizeof(h));
+  if (f.seek(slotOff) && f.write((const uint8_t*)&s, sizeof(Sample)) == sizeof(Sample)) {
+    h.head = (h.head + 1) % cap;
+    if (h.count < cap) h.count++;
+    f.seek(0); f.write((const uint8_t*)&h, sizeof(h));
+  }
   f.close();
 }
 
@@ -50,6 +51,8 @@ int SdStorage::loadRing(NodeId n, Metric m, bool daily, Sample* out, int maxOut)
   if (f.size() < (int)sizeof(h)) { f.close(); return 0; }
   f.read((uint8_t*)&h, sizeof(h));
   if (h.magic != MAGIC) { f.close(); return 0; }
+  if (h.capacity == 0) { f.close(); return 0; }              // guard div-by-zero on a truncated file
+  if (h.recordSize != sizeof(Sample)) { f.close(); return 0; } // layout mismatch -> ignore file
   uint16_t size = h.count < h.capacity ? h.count : h.capacity;
   uint16_t start = (h.head + h.capacity - size) % h.capacity;
   int k = 0;
@@ -64,6 +67,7 @@ int SdStorage::loadRing(NodeId n, Metric m, bool daily, Sample* out, int maxOut)
 
 void SdStorage::appendPumpEvent(const PumpEvent& e) {
   if (!ok_) return;
+  // pumps.log grows unbounded on disk (harmless at project scale; rotate later if needed).
   File f = SD.open("/garden/pumps.log", FILE_APPEND);
   if (!f) return;
   f.write((const uint8_t*)&e, sizeof(e)); f.close();

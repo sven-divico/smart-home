@@ -24,6 +24,7 @@ void TimeSeriesStore::sinkTrampoline(void* ctx, NodeId n, Metric m, bool daily, 
 
 void TimeSeriesStore::reload() {
   if (!storage_) return;
+  // Sample buf[DAILY_CAP] is ~2.4 KB of stack (fine on the app_main task; don't call from a tiny stack).
   Sample buf[DAILY_CAP];
   for (int i = 0; i < count_; i++) {
     NodeId n = keys_[i].node; Metric m = keys_[i].metric;

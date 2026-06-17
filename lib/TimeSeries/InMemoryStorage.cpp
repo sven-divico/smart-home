@@ -2,9 +2,17 @@
 #include <string.h>
 using namespace ts;
 
-InMemoryStorage::Buf& InMemoryStorage::bufFor(NodeId n, Metric m, bool daily) {
+InMemoryStorage::Buf* InMemoryStorage::findBuf(NodeId n, Metric m, bool daily) {
   for (int i = 0; i < nbufs_; i++)
-    if (bufs_[i].n == n && bufs_[i].m == m && bufs_[i].daily == daily) return bufs_[i];
+    if (bufs_[i].n == n && bufs_[i].m == m && bufs_[i].daily == daily) return &bufs_[i];
+  return nullptr;
+}
+
+InMemoryStorage::Buf& InMemoryStorage::bufFor(NodeId n, Metric m, bool daily) {
+  if (Buf* b = findBuf(n, m, daily)) return *b;
+  // Overflow (>MAXB unique keys) drops data rather than corrupting memory.
+  // With 12 series this never triggers in practice.
+  if (nbufs_ >= MAXB) { static Buf sentinel; sentinel.count = 0; return sentinel; }
   Buf& b = bufs_[nbufs_++];
   b.n = n; b.m = m; b.daily = daily; b.count = 0;
   return b;
@@ -18,9 +26,10 @@ void InMemoryStorage::appendSample(NodeId n, Metric m, bool daily, const Sample&
 }
 
 int InMemoryStorage::loadRing(NodeId n, Metric m, bool daily, Sample* out, int maxOut) {
-  Buf& b = bufFor(n, m, daily);
-  int k = b.count < maxOut ? b.count : maxOut;
-  for (int i = 0; i < k; i++) out[i] = b.s[i];
+  Buf* b = findBuf(n, m, daily);
+  if (!b) return 0;   // key never written — don't allocate a slot
+  int k = b->count < maxOut ? b->count : maxOut;
+  for (int i = 0; i < k; i++) out[i] = b->s[i];
   return k;
 }
 
