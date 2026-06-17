@@ -37,14 +37,15 @@
 
 **Tests (`test/`, one folder per suite — PlatformIO convention):**
 `test/test_ring/`, `test/test_series/`, `test/test_store/`, `test/test_clock/`, `test/test_pumplog/`, `test/test_sim/`.
+> PlatformIO compiles ALL `.cpp` in one `test_*` directory into a single binary with one `main()`. When a chunk says "create `test/test_store/test_store.cpp`" alongside an existing `test_store/test_metrics.cpp`, either MERGE the new tests into the existing single-`main` file (one `setUp`/`tearDown`/`main`, all `RUN_TEST`s) OR put them in a fresh `test_*` directory with its own `main()` — never two `main()`s in one folder. (As built: Chunk 4 store tests merged into `test_store/test_metrics.cpp`; Chunk 6 `InMemoryStorage` tests live in their own `test_storage/` directory, while the store↔storage write-through/reload tests sit with the store suite.)
 
 ### Cross-cutting constants (defined once in `metrics.h`)
 ```cpp
-static const uint32_t RAW_INTERVAL_S = 900;    // 15 min
-static const uint32_t FINE_INTERVAL_S = 30;    // while pumping
-static const uint32_t DAY_S          = 86400;
-static const uint16_t RAW_CAP        = 192;    // 48 h of 15-min points
-static const uint16_t DAILY_CAP      = 400;    // ~13 months of daily points
+constexpr uint32_t RAW_INTERVAL_S  = 900;      // 15 min  (constexpr = inline in C++17,
+constexpr uint32_t FINE_INTERVAL_S = 30;       //          single def across TUs, odr-safe)
+constexpr uint32_t DAY_S           = 86400;
+constexpr uint16_t RAW_CAP         = 192;      // 48 h of 15-min points
+constexpr uint16_t DAILY_CAP       = 400;      // ~13 months of daily points
 ```
 Endianness note: ESP32-S3 and the dev Mac are both little-endian, so packed records are byte-compatible across device/host. Documented here so nobody adds a big-endian target without revisiting it.
 
@@ -770,7 +771,12 @@ int TimeSeriesStore::sampleWindow(NodeId node, Metric metric, Window w,
   if (!s || nPoints <= 0) return 0;
   const Ring& ring = (w == W_12H) ? s->raw() : s->daily();
   uint32_t span = windowSpan(w);
-  uint32_t start = (now > span) ? now - span : 0;
+  // Align the window start DOWN to the tier grid (daily/raw points are grid-aligned),
+  // so each bucket lands one stored point — an unaligned start shifts buckets and
+  // drops the edge points. Tail gap [last finalized .. now] is always empty anyway.
+  uint32_t align = (w == W_12H) ? RAW_INTERVAL_S : DAY_S;
+  uint32_t rawStart = (now > span) ? now - span : 0;
+  uint32_t start = (rawStart / align) * align;
 
   // Bucket the window into nPoints; each bucket = mean of samples that fall in it.
   // Empty buckets carry the previous bucket's value (flat hold) so sparklines stay continuous.
@@ -794,10 +800,12 @@ int TimeSeriesStore::sampleWindow(NodeId node, Metric metric, Window w,
 
 int TimeSeriesStore::averageAcrossNodes(Metric metric, Window w, uint32_t now,
                                         float* out, int nPoints) const {
+  static const int TMP_CAP = 64;
+  if (nPoints > TMP_CAP) nPoints = TMP_CAP;   // clamp: never write past tmp (callers use ≤30)
   const NodeId soilNodes[] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS};
   for (int b = 0; b < nPoints; b++) out[b] = 0.0f;
   int contributors = 0;
-  float tmp[64];
+  float tmp[TMP_CAP];
   for (NodeId n : soilNodes) {
     if (sampleWindow(n, metric, w, now, tmp, nPoints) == nPoints) {
       for (int b = 0; b < nPoints; b++) out[b] += tmp[b];

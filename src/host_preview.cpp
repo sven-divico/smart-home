@@ -8,6 +8,14 @@
 #include "ui/canvas1.h"
 #include "ui/ui_model.h"
 #include "ui/pages.h"
+#include "TimeSeriesStore.h"
+#include "PumpLog.h"
+#include "Clock.h"
+#include "SimSource.h"
+#include "data/GardenRepository.h"
+
+static uint32_t g_simMillis = 0;
+static uint32_t simMillis() { return g_simMillis; }
 
 // Write the visible 792x272 area as a binary PGM (P5): 0 = black, 255 = white.
 static bool writePGM(Canvas1 &c, const char *path) {
@@ -23,27 +31,29 @@ static bool writePGM(Canvas1 &c, const char *path) {
 
 int main(int argc, char **argv) {
   const char *outDir = (argc > 1) ? argv[1] : "build/preview";
-  const UiModel &m = mockModel();
+
+  TimeSeriesStore store; store.init();           // no storage -> pure RAM
+  PumpLog log;
+  Clock clock(simMillis);
+  clock.setEpoch(1750000000);                    // a fixed plausible "now"
+  uint32_t now = clock.now();
+
+  SimSource sim; sim.seed(store, log, now);
+  LocalRepository repo(store, log, clock);
+  UiModel m = repo.buildModel();
 
   uint8_t frame[Canvas1::FRAME_BYTES];
   Canvas1 canvas(frame);
-
   char path[512];
 
   renderMain(canvas, m);
   snprintf(path, sizeof(path), "%s/main.pgm", outDir);
-  if (!writePGM(canvas, path)) return 1;
-  printf("wrote %s\n", path);
-
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
   renderDetail(canvas, m);
   snprintf(path, sizeof(path), "%s/detail.pgm", outDir);
-  if (!writePGM(canvas, path)) return 1;
-  printf("wrote %s\n", path);
-
-  renderActuators(canvas, m, /*focus=*/1);  // Beet 2 focused, matching the mockup
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
+  renderActuators(canvas, m, 1);
   snprintf(path, sizeof(path), "%s/actuators.pgm", outDir);
-  if (!writePGM(canvas, path)) return 1;
-  printf("wrote %s\n", path);
-
+  if (!writePGM(canvas, path)) return 1; printf("wrote %s\n", path);
   return 0;
 }

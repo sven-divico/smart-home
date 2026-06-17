@@ -12,6 +12,38 @@
 #include "ui/ui_model.h"
 #include "ui/pages.h"
 
+#include "TimeSeriesStore.h"
+#include "PumpLog.h"
+#include "Clock.h"
+#include "SimSource.h"
+#include "InMemoryStorage.h"
+#include "data/SdStorage.h"
+#include "data/GardenRepository.h"
+
+// Arduino millis() returns `unsigned long`, which is a DISTINCT type from
+// uint32_t on the ESP32 toolchain — &millis won't bind to uint32_t(*)().
+// Wrap it so the Clock's function-pointer type matches.
+static uint32_t nowMillis() { return (uint32_t)millis(); }
+
+static SdStorage       s_sd;
+static InMemoryStorage s_ram;              // fallback when no card
+static SeriesStorage*  s_storage = nullptr;  // the active backend (sd or ram)
+static TimeSeriesStore s_store;
+static PumpLog         s_log;
+static Clock           s_clock(nowMillis);
+static SimSource       s_sim;
+static IGardenRepository* s_repo = nullptr;
+static uint32_t s_lastTickMs = 0;
+
+// Forward the PumpLog sink to whatever storage is active (mirrors the Series sink).
+static void pumpPersist(void* ctx, const PumpEvent& e) {
+  static_cast<SeriesStorage*>(ctx)->appendPumpEvent(e);
+}
+
+#ifndef TICK_MS
+#define TICK_MS 900000   // 15 min; build with -D TICK_MS=5000 for a fast bench demo
+#endif
+
 // Mission 1 progress:
 //   [x] step 1 — skeleton + role dispatch   [x] step 2 — first pixels (clean)
 //   [x] step 3 — Canvas1 + the 3 page renderers, on hardware (180° rotated)
@@ -31,7 +63,7 @@ static const uint8_t PIN_UP   = 6;   // rotary up    -> focus prev (page 3)
 // Full-panel framebuffer in the driver's native 800x272 layout (== Canvas1::FRAME_BYTES).
 static uint8_t s_frame[EPD_W * EPD_H / 8];
 
-// Runtime UI state (mutable copy of the mock model so CONF can flip pump states).
+// Runtime UI state — snapshot built by the repository; rebuilt on each tick or CONF toggle.
 static UiModel g_model;
 static int     g_page  = 0;   // 0 = Main, 1 = Detail, 2 = Actuators
 static int     g_focus = 0;   // highlighted pump row on Page 3
@@ -101,12 +133,6 @@ static void pushPartial() {
 static void drawFull()    { renderCurrentPage(); pushFull(); }
 static void drawPartial() { renderCurrentPage(); pushPartial(); }
 
-static int countActivePumps() {
-  int n = 0;
-  for (int i = 0; i < 4; i++) if (g_model.pumps[i].active) n++;
-  return n;
-}
-
 void display_controller_setup() {
   Serial.println();
   Serial.println(F("=== ESP-Claw :: Display Controller ==="));
@@ -118,13 +144,44 @@ void display_controller_setup() {
   pinMode(PIN_CONF, INPUT_PULLUP);
   pinMode(PIN_UP,   INPUT_PULLUP);
 
-  g_model = mockModel();
-
-  Serial.println(F("EPD: enabling panel power rail (GPIO 7)"));
+  // Enable the peripheral power rail (GPIO 7) FIRST. It powers the e-paper, and the
+  // microSD slot appears to share it — so SD.begin() must run AFTER this or the card
+  // is unpowered and never completes its SPI init.
+  Serial.println(F("Power: enabling peripheral rail (GPIO 7)"));
   pinMode(EPD_POWER_PIN, OUTPUT);
   digitalWrite(EPD_POWER_PIN, HIGH);
   delay(100);
-  EPD_GPIOInit();
+
+  s_storage = s_sd.begin() ? (SeriesStorage*)&s_sd : (SeriesStorage*)&s_ram;
+  if (s_storage == (SeriesStorage*)&s_ram)
+    Serial.println(F("SD: no card — running RAM-only (history will not persist)"));
+  s_store.init(s_storage);
+  s_log.setSink(pumpPersist, s_storage);       // pump events write through too
+
+  uint32_t epoch;
+  if (s_storage->loadClock(epoch)) s_clock.setEpoch(epoch);
+  else s_clock.setEpoch(1750000000);           // first-boot baseline
+
+  s_store.reload();                            // load any persisted rings
+  PumpEvent evbuf[256];
+  int ne = s_storage->loadPumpEvents(evbuf, 256);
+  for (int i = 0; i < ne; i++) s_log.appendDirect(evbuf[i]);   // RAM only, no re-persist
+
+  bool empty = !s_store.find(ts::NODE_BEET1, ts::M_SOIL)->hasData();
+  if (empty) {
+    Serial.println(F("Store empty — seeding ~30 d history"));
+    s_sim.seed(s_store, s_log, s_clock.now());  // pump events persist via the sink
+    s_store.persistAll();                       // persist the seeded ring contents once
+  }
+
+  // Function-local static: constructed once, lives for the program. s_repo is set
+  // here before loop() ever runs and stays valid for the program's lifetime, so
+  // loop()'s unconditional s_repo-> dereferences are safe (setup() has no early return).
+  static LocalRepository repo(s_store, s_log, s_clock);
+  s_repo = &repo;
+  g_model = s_repo->buildModel();
+
+  EPD_GPIOInit();   // power rail already enabled at the top of setup()
 
   Serial.println(F("Nav: Menu=prev  Exit=next  |  Page 3: wheel Up/Down=focus, CONF=toggle"));
   drawFull();  // initial render (Main)
@@ -138,6 +195,15 @@ void display_controller_loop() {
   bool pageChanged = false;   // Menu/Exit -> whole screen changes -> FULL refresh
   bool inPageChanged = false; // Page-3 cursor/toggle -> small change -> PARTIAL refresh
 
+  uint32_t ms = millis();
+  if (ms - s_lastTickMs >= TICK_MS) {
+    s_lastTickMs = ms;
+    s_sim.tick(s_store, s_log, s_clock.now());
+    s_storage->saveClock(s_clock.now());       // active backend (no-op when RAM-only)
+    g_model = s_repo->buildModel();
+    pageChanged = true;                        // refresh with fresh data
+  }
+
   if (eMenu) { g_page = (g_page + PAGE_COUNT - 1) % PAGE_COUNT; pageChanged = true; }
   if (eExit) { g_page = (g_page + 1) % PAGE_COUNT; pageChanged = true; }
 
@@ -145,10 +211,8 @@ void display_controller_loop() {
     if (eUp)   { g_focus = (g_focus + 4 - 1) % 4; inPageChanged = true; }
     if (eDown) { g_focus = (g_focus + 1) % 4; inPageChanged = true; }
     if (eConf) {
-      Pump &p = g_model.pumps[g_focus];
-      p.on = !p.on;
-      p.active = p.on;                     // reflect running state on the row
-      g_model.activePumps = countActivePumps();
+      s_repo->togglePump(g_focus);
+      g_model = s_repo->buildModel();
       inPageChanged = true;
     }
   }
