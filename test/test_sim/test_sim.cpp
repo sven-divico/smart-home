@@ -29,20 +29,23 @@ static void test_seed_is_deterministic() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, a.latest(NODE_BEET1, M_SOIL), b.latest(NODE_BEET1, M_SOIL));
 }
 
-static void test_tick_appends_and_can_trigger_pump() {
+static void test_tick_triggers_dry_pump() {
   TimeSeriesStore store; store.init(); PumpLog log; SimSource sim;
   uint32_t now = 40 * DAY_S;
   sim.seed(store, log, now);
-  bool before = store.find(NODE_GEWAECHSHAUS, M_SOIL)->hasData();
-  sim.tick(store, log, now + RAW_INTERVAL_S);
-  TEST_ASSERT_TRUE(before);  // sanity: data present after seed
-  TEST_ASSERT_TRUE(store.find(NODE_GEWAECHSHAUS, M_SOIL)->hasData());
+  uint16_t before = log.size();
+  uint32_t t2 = now + RAW_INTERVAL_S;
+  sim.tick(store, log, t2);
+  // greenhouse seeds dry (~31% < 35% DRY_THRESHOLD), so the first tick MUST start its pump
+  TEST_ASSERT_TRUE(log.size() > before);                  // a pump event was actually generated
+  TEST_ASSERT_TRUE(log.isRunning(NODE_GEWAECHSHAUS, t2)); // ...and the greenhouse pump is now running
+  TEST_ASSERT_TRUE(store.find(NODE_GEWAECHSHAUS, M_SOIL)->hasData());  // tick advanced the series
 }
 
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_seed_fills_daily_history);
   RUN_TEST(test_seed_is_deterministic);
-  RUN_TEST(test_tick_appends_and_can_trigger_pump);
+  RUN_TEST(test_tick_triggers_dry_pump);
   return UNITY_END();
 }

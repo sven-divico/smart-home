@@ -19,11 +19,13 @@ float SimSource::diurnalTemp(uint32_t ts) const {
 void SimSource::seed(TimeSeriesStore& store, PumpLog& log, uint32_t now) {
   const NodeId soil[] = {NODE_BEET1, NODE_BEET2, NODE_BEET3, NODE_GEWAECHSHAUS};
 
-  // 30 daily points per soil node + env air temp
+  // 30 daily points per soil node + env air temp.
+  // Precondition: now >= 30*DAY_S (real epoch timestamps always are). With a tiny
+  // synthetic `now`, (now/DAY_S - d) would underflow uint32_t — don't seed with one.
   for (int d = 30; d >= 1; d--) {
     uint32_t dayTs = ((now / DAY_S) - d) * DAY_S;
     for (NodeId n : soil) {
-      float v = soilBaseFor(n) + frand(-4, 4) - (d % 7); // slow decline + noise
+      float v = soilBaseFor(n) + frand(-4, 4) - (d % 7); // weekly sawtooth variation + noise
       if (v < 12) v += 25;                               // a watering bump
       Series* s = store.find(n, M_SOIL); if (s) s->pushDailyDirect({dayTs, encode(M_SOIL, v)});
     }
@@ -41,10 +43,13 @@ void SimSource::seed(TimeSeriesStore& store, PumpLog& log, uint32_t now) {
     store.find(NODE_ENV, M_AIR_TEMP)->pushRawDirect({t, encode(M_AIR_TEMP, diurnalTemp(t) + frand(-1,1))});
     store.find(NODE_ENV, M_PRESSURE)->pushRawDirect({t, encode(M_PRESSURE, 1011 + frand(0,4))});
     store.find(NODE_ENV, M_HUMIDITY)->pushRawDirect({t, encode(M_HUMIDITY, 55 + frand(-6,6))});
-    store.find(NODE_ENV, M_LUX)->pushRawDirect({t, encode(M_LUX, fmaxf(0, diurnalTemp(t) > 19 ? 12000 : 200) + frand(0,2000))});
+    store.find(NODE_ENV, M_LUX)->pushRawDirect({t, encode(M_LUX, (diurnalTemp(t) > 19 ? 12000 : 200) + frand(0,2000))});
   }
 
-  // a couple of past greenhouse waterings in the pump log
+  // A couple of past greenhouse waterings. Uses append() (NOT appendDirect) ON PURPOSE:
+  // when a storage sink is attached (device first boot), these seeded events should be
+  // persisted to pumps.log — the pump-log analog of persistAll() for the series rings —
+  // so the watering history survives a reboot and isn't lost when the store is non-empty.
   uint32_t y = ((now / DAY_S) - 1) * DAY_S + 6 * 3600;
   log.append({y, NODE_GEWAECHSHAUS, EV_START, 30, DRY_THRESHOLD});
   log.append({y + 180, NODE_GEWAECHSHAUS, EV_STOP, 46, WET_TARGET});
