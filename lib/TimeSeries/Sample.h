@@ -16,3 +16,7 @@ struct PumpEvent {
 #pragma pack(pop)
 
 enum PumpEventType : uint8_t { EV_START = 0, EV_STOP = 1 };
+
+// Binary layout is the on-disk/persistence contract — fail the build if it drifts.
+static_assert(sizeof(Sample) == 6, "Sample on-disk size changed");
+static_assert(sizeof(PumpEvent) == 10, "PumpEvent on-disk size changed");

@@ -40,11 +40,11 @@
 
 ### Cross-cutting constants (defined once in `metrics.h`)
 ```cpp
-static const uint32_t RAW_INTERVAL_S = 900;    // 15 min
-static const uint32_t FINE_INTERVAL_S = 30;    // while pumping
-static const uint32_t DAY_S          = 86400;
-static const uint16_t RAW_CAP        = 192;    // 48 h of 15-min points
-static const uint16_t DAILY_CAP      = 400;    // ~13 months of daily points
+constexpr uint32_t RAW_INTERVAL_S  = 900;      // 15 min  (constexpr = inline in C++17,
+constexpr uint32_t FINE_INTERVAL_S = 30;       //          single def across TUs, odr-safe)
+constexpr uint32_t DAY_S           = 86400;
+constexpr uint16_t RAW_CAP         = 192;      // 48 h of 15-min points
+constexpr uint16_t DAILY_CAP       = 400;      // ~13 months of daily points
 ```
 Endianness note: ESP32-S3 and the dev Mac are both little-endian, so packed records are byte-compatible across device/host. Documented here so nobody adds a big-endian target without revisiting it.
 

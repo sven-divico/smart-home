@@ -14,11 +14,13 @@ enum Metric : uint8_t {
 };
 enum Window : uint8_t { W_12H = 0, W_7D, W_MONTH };
 
-static const uint32_t RAW_INTERVAL_S  = 900;
-static const uint32_t FINE_INTERVAL_S = 30;
-static const uint32_t DAY_S           = 86400;
-static const uint16_t RAW_CAP         = 192;
-static const uint16_t DAILY_CAP       = 400;
+// constexpr (implicitly inline in C++17) → single definition across all TUs,
+// so these stay odr-use-safe once Series.cpp / TimeSeriesStore.cpp etc. use them.
+constexpr uint32_t RAW_INTERVAL_S  = 900;
+constexpr uint32_t FINE_INTERVAL_S = 30;
+constexpr uint32_t DAY_S           = 86400;
+constexpr uint16_t RAW_CAP         = 192;
+constexpr uint16_t DAILY_CAP       = 400;
 
 // Fixed-point scale per metric: stored = round(real * mul / div).
 struct Scale { int16_t mul; int16_t div; };
