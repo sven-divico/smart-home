@@ -9,12 +9,11 @@
 substitutions:
   node_name: amoled-panel-01
   friendly: "Garden Panel"
-  # HA entity ids this panel reads/controls. NOTE the doubled "plant_1_plant_1":
-  # soil-pump-01 sets device name "Plant 1" AND entity name "Plant 1 Soil …", and
-  # HA prepends the device name. (Cleanup later: drop the ${friendly} prefix from
-  # soil-pump-01's entity names so ids become sensor.plant_1_soil_moisture.)
-  moisture_entity: sensor.plant_1_plant_1_soil_moisture
-  pump_entity: switch.plant_1_plant_1_pump
+  # HA entity ids this panel reads/controls. After the soil-pump entity-name cleanup
+  # HA regenerated these with the AREA ("Garten") prefixed: garten_plant_1_*.
+  # (Verify in HA Developer Tools → States if they ever change, e.g. area rename.)
+  moisture_entity: sensor.garten_plant_1_soil_moisture
+  pump_entity: switch.garten_plant_1_pump
 
 esphome:
   name: ${node_name}

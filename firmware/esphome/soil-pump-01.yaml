@@ -2,6 +2,9 @@
 # Board: Adafruit Feather ESP32-S3, 8MB flash, no PSRAM.
 # Reference template for ESPHome nodes — shared boilerplate is in common/base.yaml.
 #
+# Entity names are NOT prefixed with the device name — HA already prepends "Plant 1",
+# giving clean ids like sensor.plant_1_soil_moisture (NOT plant_1_plant_1_...).
+#
 # Wiring (Feather silkscreen label -> module pin):
 #   3V   -> soil VCC        (power sensor at 3.3V so AOUT stays in ADC range)
 #   GND  -> soil GND, relay GND
@@ -31,22 +34,46 @@ packages:
 #   off = all good, blinking = running but not connected.
 light:
   - platform: status_led
-    name: "${friendly} Status"
+    name: "Status"
     pin: GPIO13
+
+# HA-adjustable sampling interval (testing-friendly default of 5s). Changing this in
+# HA re-arms the ADC poller live, no re-flash needed.
+number:
+  - platform: template
+    name: "Sample Interval"
+    id: sample_interval
+    icon: mdi:timer-cog
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    min_value: 1
+    max_value: 300
+    step: 1
+    unit_of_measurement: "s"
+    mode: box
+    on_value:
+      - lambda: |-
+          uint32_t ms = (uint32_t) (x * 1000.0f);
+          id(soil_voltage).set_update_interval(ms);
+          id(soil_voltage).stop_poller();
+          id(soil_voltage).start_poller();
 
 sensor:
   # Raw ADC voltage from the capacitive sensor. Watch this value to calibrate.
   - platform: adc
     pin: GPIO8          # A5
     id: soil_voltage
-    name: "${friendly} Soil Voltage"
+    name: "Soil Voltage"
     attenuation: 12db   # full 0..~3.3V input range
-    update_interval: 30s
+    update_interval: 5s # default; overridden live by the 'Sample Interval' number
     unit_of_measurement: "V"
     accuracy_decimals: 3
     filters:
       - median:
-          window_size: 5
+          window_size: 3
+          send_every: 1   # publish every sample (light smoothing over last 3)
 
   # Moisture %, derived from the raw voltage.
   # CALIBRATE: note soil_voltage with the sensor (1) dry in air, (2) tip in water,
@@ -54,7 +81,7 @@ sensor:
   - platform: copy
     source_id: soil_voltage
     id: soil_moisture
-    name: "${friendly} Soil Moisture"
+    name: "Soil Moisture"
     unit_of_measurement: "%"
     accuracy_decimals: 0
     icon: mdi:water-percent
@@ -70,7 +97,7 @@ switch:
       number: GPIO6      # D6
       inverted: true     # active-low "Low Level Trigger" relay board
     id: pump
-    name: "${friendly} Pump"
+    name: "Pump"
     icon: mdi:water-pump
     # SAFETY: never let the pump run away. Auto-off after 30s no matter what.
     on_turn_on:
