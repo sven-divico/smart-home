@@ -1,0 +1,40 @@
+# ESP-Claw — 3-day forecast template sensors for amoled-panel-01.
+#
+# Modern HA exposes forecast only via the weather.get_forecasts action (not as
+# entity attributes), so we materialise 3 days into plain sensors the panel reads:
+#   sensor.forecast_day1_line / _day2_line / _day3_line  ->  "Wed  19° / 11°"
+#
+# INSTALL (one time):
+#   1. In configuration.yaml make sure packages are loaded:
+#        homeassistant:
+#          packages: !include_dir_named packages
+#   2. Copy this file to <HA config>/packages/garden_forecast.yaml
+#   3. If your weather entity isn't weather.forecast_home, change it below.
+#   4. Developer Tools -> YAML -> Check config, then Restart HA
+#      (or Developer Tools -> Actions -> "Template: Reload").
+#
+# It refreshes on HA start and every 30 min.
+
+template:
+  - trigger:
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/30"
+    action:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: daily
+        response_variable: fc
+    sensor:
+      - name: "Forecast Day1 Line"
+        unique_id: espclaw_forecast_day1_line
+        state: "{% set d = fc['weather.forecast_home'].forecast[1] %}{{ as_timestamp(d.datetime) | timestamp_custom('%a', false) }}  {{ d.temperature | round }}° / {{ d.templow | round }}°"
+      - name: "Forecast Day2 Line"
+        unique_id: espclaw_forecast_day2_line
+        state: "{% set d = fc['weather.forecast_home'].forecast[2] %}{{ as_timestamp(d.datetime) | timestamp_custom('%a', false) }}  {{ d.temperature | round }}° / {{ d.templow | round }}°"
+      - name: "Forecast Day3 Line"
+        unique_id: espclaw_forecast_day3_line
+        state: "{% set d = fc['weather.forecast_home'].forecast[3] %}{{ as_timestamp(d.datetime) | timestamp_custom('%a', false) }}  {{ d.temperature | round }}° / {{ d.templow | round }}°"
