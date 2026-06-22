@@ -33,7 +33,7 @@ ESPHome nodes are identified by **hostname / mDNS** (`<name>.local`), not the nu
 |---|---|---|---|---|---|
 | `display-epaper-01` | PlatformIO | Elecrow CrowPanel 5.79" e-paper (ESP32-S3) | Indoor e-paper display, on-device time-series | In development | `platformio.ini` env `display_controller` |
 | `soil-pump-01` | ESPHome | Adafruit Feather ESP32-S3 (8MB) | Soil moisture sensor + pump relay ("Plant 1") | ✅ Live in HA | [`firmware/esphome/soil-pump-01.yaml`](../firmware/esphome/soil-pump-01.yaml) |
-| `amoled-panel-01` | ESPHome | Waveshare ESP32-S3-Touch-AMOLED-1.75C | HA touch control panel ("Garden Panel") | ✅ Phase 1 (display+touch+WiFi) @ 192.168.178.193 | [`firmware/esphome/amoled-panel-01.yaml`](../firmware/esphome/amoled-panel-01.yaml) |
+| `amoled-panel-01` | ESPHome | Waveshare ESP32-S3-Touch-AMOLED-1.75C | HA touch control panel ("Garden Panel") | ✅ Phase 2 — LVGL dashboard, live HA data + pump control @ 192.168.178.193 | [`firmware/esphome/amoled-panel-01.yaml`](../firmware/esphome/amoled-panel-01.yaml) |
 
 ## Adding a node
 

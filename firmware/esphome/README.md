@@ -73,11 +73,20 @@ Adafruit Feather ESP32-S3 (8MB). Soil moisture sensor + pump relay. IP `192.168.
 Open TODOs: confirm a clean power-on boots the app (not download mode); calibrate moisture %
 (`calibrate_linear` in the yaml); wire + test pump (need relay-module photo for polarity).
 
-### `amoled-panel-01` — ✅ Phase-1 confirmed (display + touch + WiFi)
+### `amoled-panel-01` — ✅ Phase 2 (LVGL dashboard, live)
 Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. IP `192.168.178.193`, MAC `44:1b:f6:85:53:84`.
-Display (CO5300) renders text, touch (CST9217) reports accurate coordinates, joined `d-42`.
-Config follows the [official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
-**Next: Phase 2** — LVGL dashboard with live HA data + a pump button.
+LVGL dashboard: a moisture ring + % for Plant 1 (pulled from HA via the `homeassistant`
+sensor platform), an "HA connected" status line, and a touch button that toggles
+`switch.plant_1_pump` in HA. Both directions confirmed working. Config follows the
+[official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
+
+**Requires HA adoption:** the `homeassistant` sensor/binary_sensor bindings only receive
+values once the panel is added as a device in Home Assistant. If `--%` / `connecting`
+persists, it's not adopted (or the entity ids in the yaml substitutions don't match your HA).
+
+**⚠️ External component deprecation:** `cst9217` calls `status_set_error(...c_str())`, deprecated
+and **removed in ESPHome 2026.6.0**. It builds with a warning on 2026.5.3; before upgrading ESPHome,
+fork+patch the component (or find a maintained fork) and re-pin the ref.
 
 Notes from bring-up:
 - **Flash is 32MB on the 1.75C** (wiki says 16MB for non-C). We declare `flash_size: 16MB`
