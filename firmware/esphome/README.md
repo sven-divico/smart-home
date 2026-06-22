@@ -73,28 +73,40 @@ Adafruit Feather ESP32-S3 (8MB). Soil moisture sensor + pump relay. IP `192.168.
 Open TODOs: confirm a clean power-on boots the app (not download mode); calibrate moisture %
 (`calibrate_linear` in the yaml); wire + test pump (need relay-module photo for polarity).
 
-### `amoled-panel-01` — ✅ Phase 2 (LVGL dashboard, live)
+### `amoled-panel-01` — ✅ multi-screen HA control panel
 Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. IP `192.168.178.193`, MAC `44:1b:f6:85:53:84`.
-LVGL dashboard: a moisture ring + % for Plant 1 (pulled from HA via the `homeassistant`
-sensor platform), an "HA connected" status line, and a touch button that toggles
-`switch.plant_1_plant_1_pump` in HA. Both directions confirmed working. Config follows the
+A 4-screen LVGL panel you **swipe** between (page dots at the bottom, battery % on a persistent
+top bar on every screen):
+1. **Plant** — moisture ring + % from HA, "HA connected" status, pump button (toggles the pump,
+   recolors green/dark with state).
+2. **Weather** — temp / condition / humidity from `weather.forecast_home`.
+3. **Forecast** — 3 "Day  high°/low°" lines from `sensor.forecast_day{1,2,3}_line`
+   (needs `home-assistant/packages/garden_forecast.yaml` installed).
+4. **Backlight** — vertical brightness slider, floored at 40%.
+
+Entity ids the panel reads are yaml substitutions (`moisture_entity` / `pump_entity`), pointing
+at the real `sensor.garten_plant_1_soil_moisture` / `switch.garten_plant_1_pump` (HA prefixes the
+area "Garten"). Config base follows the
 [official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
 
 Gotchas that cost us time (all resolved):
-- **Adoption + service-call permission.** The `homeassistant` sensor bindings only get values
-  once the panel is added in HA. The pump button additionally needs the device's
-  **"Allow the device to make Home Assistant service calls"** checkbox enabled (it resets to off
-  when you delete+re-add the device) — without it the button does nothing while everything else works.
-- **Doubled entity ids.** Real ids are `sensor.plant_1_plant_1_soil_moisture` / `switch.plant_1_plant_1_pump`
-  (NOT single `plant_1`) because soil-pump-01 sets device name "Plant 1" AND entity name "Plant 1 …",
-  and HA prepends the device name. The panel's `moisture_entity` / `pump_entity` substitutions point
-  at the doubled ids. (Cleanup: drop the `${friendly}` prefix from soil-pump-01's entity names.)
+- **Adoption + service-call permission.** The `homeassistant` bindings only get values once the
+  panel is added in HA. The pump button additionally needs the device's **"Allow the device to make
+  Home Assistant service calls"** checkbox enabled (resets to off on delete+re-add) — without it the
+  button silently does nothing while everything else works.
+- **Entity ids carry the area prefix** (`garten_plant_1_*`) after the soil-pump entity-name cleanup —
+  verify in Developer Tools → States if they ever change (e.g. area rename).
 - **`esphome upload` does NOT recompile** — it pushes the last-built binary. After editing the yaml,
-  run `esphome compile` (or `esphome run`) before/instead of `upload`, or you flash stale firmware.
+  run `esphome compile` (or `esphome run`), or you flash stale firmware.
+- **Swipe** is manual (no LVGL gesture): track touch-down x in `on_touch`, movement in `on_update`,
+  decide on `on_release`. `on_touch` alone fires once, so the delta stays 0 — `on_update` is the fix.
 
-**Touch driver:** `cst9217` is **vendored in-tree** under `components/cst9217/` (from
-shelson/esphome-cst9217 @ 126c017, MIT) and patched for the ESPHome 2026.6 removal of
-`status_set_error(const char*)`. We own the source via `external_components: { type: local }`.
+**Vendored components** (in-tree under `components/`, `external_components: { type: local }`):
+- `cst9217` — touch (from shelson/esphome-cst9217 @126c017, MIT), patched for the ESPHome 2026.6
+  removal of `status_set_error(const char*)`.
+- `axp2101_batt` — **read-only** battery %: reads only fuel-gauge reg 0xA4, never writes, so it can't
+  touch the power rails. ⚠️ Do NOT use the off-the-shelf AXP2101 components here — they're hardcoded
+  for M5Core2 and rewrite every rail in `setup()`, which would black this panel's display.
 Drop it if/when cst9217 lands in mainline ESPHome.
 
 Notes from bring-up:
