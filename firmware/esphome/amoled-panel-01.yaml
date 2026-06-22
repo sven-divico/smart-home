@@ -48,7 +48,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [cst9217]
+    components: [cst9217, axp2101_batt]
 
 # --- Display: QSPI AMOLED, CO5300 driver, 466x466 round (LVGL drives it) ---
 spi:
@@ -182,6 +182,19 @@ sensor:
           id: weather_humidity
           text: !lambda 'return str_sprintf("%.0f%% humidity", x);'
 
+  # Panel battery via the AXP2101 PMU (read-only). Shown top bar + auto-sent to HA.
+  - platform: axp2101_batt
+    i2c_id: bus_a
+    address: 0x34
+    update_interval: 30s
+    battery_level:
+      id: batt_level
+      name: "Panel Battery"
+      on_value:
+        - lvgl.label.update:
+            id: batt_label
+            text: !lambda 'return str_sprintf("%d%%", (int) x);'
+
 text_sensor:
   # Current weather condition (state of the HA weather entity), prettified.
   - platform: homeassistant
@@ -260,6 +273,16 @@ lvgl:
     - ts_disp1
   bg_color: 0x000000
   bg_opa: COVER
+  # Battery %, shown on every screen.
+  top_layer:
+    widgets:
+      - label:
+          id: batt_label
+          align: TOP_MID
+          y: 12
+          text: ""
+          text_color: 0xBFBFBF
+          text_font: font_small
   pages:
     # ---------- Screen 1: Plant ----------
     - id: page_plant
