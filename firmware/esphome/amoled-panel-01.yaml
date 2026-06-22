@@ -88,7 +88,7 @@ font:
   - file: "gfonts://Roboto"
     id: font_big
     size: 76
-    glyphs: "-0123456789%"
+    glyphs: "-0123456789%°"
   - file: "gfonts://Roboto"
     id: font_med
     size: 26
@@ -161,6 +161,41 @@ sensor:
       - lvgl.label.update:
           id: moisture_value
           text: !lambda 'return str_sprintf("%.0f%%", x);'
+
+  # Current weather (temperature + humidity attributes of the HA weather entity).
+  - platform: homeassistant
+    id: ha_weather_temp
+    entity_id: weather.forecast_home
+    attribute: temperature
+    on_value:
+      - lvgl.label.update:
+          id: weather_temp
+          text: !lambda 'return str_sprintf("%.0f°", x);'
+  - platform: homeassistant
+    id: ha_weather_humidity
+    entity_id: weather.forecast_home
+    attribute: humidity
+    on_value:
+      - lvgl.label.update:
+          id: weather_humidity
+          text: !lambda 'return str_sprintf("%.0f%% humidity", x);'
+
+text_sensor:
+  # Current weather condition (state of the HA weather entity), prettified.
+  - platform: homeassistant
+    id: ha_weather_cond
+    entity_id: weather.forecast_home
+    on_value:
+      - lvgl.label.update:
+          id: weather_cond
+          text: !lambda |-
+            if (x == "partlycloudy") return std::string("Partly cloudy");
+            if (x == "clear-night")  return std::string("Clear night");
+            if (x == "lightning-rainy") return std::string("Thunderstorm");
+            if (x == "snowy-rainy")  return std::string("Sleet");
+            std::string s = x;
+            if (!s.empty()) s[0] = toupper(s[0]);
+            return s;
 
 binary_sensor:
   # Pump on/off state mirrored from HA, to relabel the button.
@@ -279,8 +314,28 @@ lvgl:
     # ---------- Screen 2: Weather (placeholder) ----------
     - id: page_weather
       widgets:
-        - label: { align: CENTER, text: "Weather", text_color: 0xFFFFFF, text_font: font_med }
-        - label: { align: CENTER, y: 36, text: "soon", text_color: 0x6A6A6A, text_font: font_small }
+        - label: { align: TOP_MID, y: 44, text: "Weather", text_color: 0x8A8A8A, text_font: font_small }
+        - label:
+            id: weather_temp
+            align: CENTER
+            y: -18
+            text: "--°"
+            text_color: 0xFFFFFF
+            text_font: font_big
+        - label:
+            id: weather_cond
+            align: CENTER
+            y: 38
+            text: ""
+            text_color: 0x9AC7E0
+            text_font: font_med
+        - label:
+            id: weather_humidity
+            align: CENTER
+            y: 70
+            text: ""
+            text_color: 0x8A8A8A
+            text_font: font_small
         - obj: { align: BOTTOM_MID, x: -24, y: -16, width: 8, height: 8, radius: 4, bg_color: 0x444444, bg_opa: COVER, border_width: 0 }
         - obj: { align: BOTTOM_MID, x: -8,  y: -16, width: 8, height: 8, radius: 4, bg_color: 0x1D9E75, bg_opa: COVER, border_width: 0 }
         - obj: { align: BOTTOM_MID, x: 8,   y: -16, width: 8, height: 8, radius: 4, bg_color: 0x444444, bg_opa: COVER, border_width: 0 }
@@ -297,8 +352,36 @@ lvgl:
     # ---------- Screen 4: Backlight (placeholder) ----------
     - id: page_light
       widgets:
-        - label: { align: CENTER, text: "Backlight", text_color: 0xFFFFFF, text_font: font_med }
-        - label: { align: CENTER, y: 36, text: "soon", text_color: 0x6A6A6A, text_font: font_small }
+        - label: { align: TOP_MID, y: 44, text: "Backlight", text_color: 0x8A8A8A, text_font: font_small }
+        # Vertical slider (vertical drag = brightness; horizontal stays free for swipe).
+        - slider:
+            id: backlight_slider
+            align: CENTER
+            x: -64
+            width: 26
+            height: 220
+            min_value: 40   # safeguard: never dim below 40% (keeps screen readable)
+            max_value: 100
+            value: 100
+            bg_color: 0x1C1C1C
+            indicator:
+              bg_color: 0xE6E6E6
+            knob:
+              bg_color: 0xFFFFFF
+            on_value:
+              - light.turn_on:
+                  id: display_backlight
+                  brightness: !lambda 'return x / 100.0f;'
+              - lvgl.label.update:
+                  id: backlight_pct
+                  text: !lambda 'return str_sprintf("%d%%", (int) x);'
+        - label:
+            id: backlight_pct
+            align: CENTER
+            x: 34
+            text: "100%"
+            text_color: 0xFFFFFF
+            text_font: font_big
         - obj: { align: BOTTOM_MID, x: -24, y: -16, width: 8, height: 8, radius: 4, bg_color: 0x444444, bg_opa: COVER, border_width: 0 }
         - obj: { align: BOTTOM_MID, x: -8,  y: -16, width: 8, height: 8, radius: 4, bg_color: 0x444444, bg_opa: COVER, border_width: 0 }
         - obj: { align: BOTTOM_MID, x: 8,   y: -16, width: 8, height: 8, radius: 4, bg_color: 0x444444, bg_opa: COVER, border_width: 0 }
