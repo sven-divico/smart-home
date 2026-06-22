@@ -9,9 +9,12 @@
 substitutions:
   node_name: amoled-panel-01
   friendly: "Garden Panel"
-  # HA entity ids this panel reads/controls — VERIFY against your HA if they differ.
-  moisture_entity: sensor.plant_1_soil_moisture
-  pump_entity: switch.plant_1_pump
+  # HA entity ids this panel reads/controls. NOTE the doubled "plant_1_plant_1":
+  # soil-pump-01 sets device name "Plant 1" AND entity name "Plant 1 Soil …", and
+  # HA prepends the device name. (Cleanup later: drop the ${friendly} prefix from
+  # soil-pump-01's entity names so ids become sensor.plant_1_soil_moisture.)
+  moisture_entity: sensor.plant_1_plant_1_soil_moisture
+  pump_entity: switch.plant_1_plant_1_pump
 
 esphome:
   name: ${node_name}
@@ -38,14 +41,14 @@ packages:
   base: !include common/base.yaml
 
 # The CST9217 touch driver isn't in stable ESPHome yet — external component.
-# Vetted 2026-06-22: ~190 lines, I2C + GPIO only (no network/fs/exec), a faithful
-# port of the official Waveshare driver. Pinned to the reviewed commit so it can't
-# change under us. Re-review before bumping the ref.
+# Vendored in-tree under components/cst9217/ (from shelson/esphome-cst9217 @
+# 126c0174, MIT) so we own the source. Patched for the ESPHome 2026.6 removal of
+# status_set_error(const char*) — see components/cst9217/README.md. Drop this
+# block + the directory if/when cst9217 lands in mainline ESPHome.
 external_components:
   - source:
-      type: git
-      url: https://github.com/shelson/esphome-cst9217
-      ref: 126c0174a17857a7496284ab9d06ba5d7a141fbd
+      type: local
+      path: components
     components: [cst9217]
 
 # --- Display: QSPI AMOLED, CO5300 driver, 466x466 round (LVGL drives it) ---

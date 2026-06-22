@@ -77,16 +77,25 @@ Open TODOs: confirm a clean power-on boots the app (not download mode); calibrat
 Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. IP `192.168.178.193`, MAC `44:1b:f6:85:53:84`.
 LVGL dashboard: a moisture ring + % for Plant 1 (pulled from HA via the `homeassistant`
 sensor platform), an "HA connected" status line, and a touch button that toggles
-`switch.plant_1_pump` in HA. Both directions confirmed working. Config follows the
+`switch.plant_1_plant_1_pump` in HA. Both directions confirmed working. Config follows the
 [official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
 
-**Requires HA adoption:** the `homeassistant` sensor/binary_sensor bindings only receive
-values once the panel is added as a device in Home Assistant. If `--%` / `connecting`
-persists, it's not adopted (or the entity ids in the yaml substitutions don't match your HA).
+Gotchas that cost us time (all resolved):
+- **Adoption + service-call permission.** The `homeassistant` sensor bindings only get values
+  once the panel is added in HA. The pump button additionally needs the device's
+  **"Allow the device to make Home Assistant service calls"** checkbox enabled (it resets to off
+  when you delete+re-add the device) — without it the button does nothing while everything else works.
+- **Doubled entity ids.** Real ids are `sensor.plant_1_plant_1_soil_moisture` / `switch.plant_1_plant_1_pump`
+  (NOT single `plant_1`) because soil-pump-01 sets device name "Plant 1" AND entity name "Plant 1 …",
+  and HA prepends the device name. The panel's `moisture_entity` / `pump_entity` substitutions point
+  at the doubled ids. (Cleanup: drop the `${friendly}` prefix from soil-pump-01's entity names.)
+- **`esphome upload` does NOT recompile** — it pushes the last-built binary. After editing the yaml,
+  run `esphome compile` (or `esphome run`) before/instead of `upload`, or you flash stale firmware.
 
-**⚠️ External component deprecation:** `cst9217` calls `status_set_error(...c_str())`, deprecated
-and **removed in ESPHome 2026.6.0**. It builds with a warning on 2026.5.3; before upgrading ESPHome,
-fork+patch the component (or find a maintained fork) and re-pin the ref.
+**Touch driver:** `cst9217` is **vendored in-tree** under `components/cst9217/` (from
+shelson/esphome-cst9217 @ 126c017, MIT) and patched for the ESPHome 2026.6 removal of
+`status_set_error(const char*)`. We own the source via `external_components: { type: local }`.
+Drop it if/when cst9217 lands in mainline ESPHome.
 
 Notes from bring-up:
 - **Flash is 32MB on the 1.75C** (wiki says 16MB for non-C). We declare `flash_size: 16MB`
