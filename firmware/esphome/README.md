@@ -73,13 +73,16 @@ Adafruit Feather ESP32-S3 (8MB). Soil moisture sensor + pump relay. IP `192.168.
 Open TODOs: confirm a clean power-on boots the app (not download mode); calibrate moisture %
 (`calibrate_linear` in the yaml); wire + test pump (need relay-module photo for polarity).
 
-### `amoled-panel-01` — 🚧 Phase-1 bring-up (not yet flashed)
-Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. Phase 1 = screen on + touch logging + HA connection.
+### `amoled-panel-01` — ✅ Phase-1 confirmed (display + touch + WiFi)
+Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. IP `192.168.178.193`, MAC `44:1b:f6:85:53:84`.
+Display (CO5300) renders text, touch (CST9217) reports accurate coordinates, joined `d-42`.
 Config follows the [official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
+**Next: Phase 2** — LVGL dashboard with live HA data + a pump button.
 
-**⚠️ Touch needs an external component.** `cst9217` is not in stable ESPHome (2026.5.3); the
-yaml references the community repo `github://shelson/esphome-cst9217`. **Review and authorize
-that repo before compiling** — compiling pulls and builds third-party code. Pin a specific
-commit once you've confirmed it works. The display (CO5300) is native ESPHome, no external code.
-
-**Verify at flash time (1.75C variant):** flash size (16MB assumed) and the exact GPIO pins.
+Notes from bring-up:
+- **Flash is 32MB on the 1.75C** (wiki says 16MB for non-C). We declare `flash_size: 16MB`
+  anyway — 16MB+OTA stays on stable partitions; 32MB+OTA needs experimental features. Plenty of room.
+- **Touch `cst9217`** is an external component (`github://shelson/esphome-cst9217`), source-reviewed
+  and **pinned to commit `126c017`**. Compiling pulls third-party code — re-review before bumping the ref.
+- Harmless boot-time `Invalid ACK 0x08 vs 0xAB` warning from the touch driver; touches parse fine after.
+- Native USB-Serial/JTAG → same `watchdog-reset` first-flash recipe as the Feather; updates now via OTA.

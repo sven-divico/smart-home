@@ -23,6 +23,8 @@ esphome:
 
 esp32:
   variant: esp32s3
+  # Chip actually has 32MB, but 32MB+OTA needs ESPHome's experimental partitions.
+  # 16MB is plenty for app+OTA and stays on stable partitions; the rest is unused.
   flash_size: 16MB
   framework:
     type: esp-idf
