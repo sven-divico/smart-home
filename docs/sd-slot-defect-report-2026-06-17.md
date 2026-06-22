@@ -2,8 +2,6 @@
 
 **Date:** 2026-06-17
 **Product:** Elecrow CrowPanel ESP32 5.79" E-Paper HMI Display (model **DIS08792E**, ESP32-S3)
-**Reseller / order no.:** _____________________  (please fill in)
-**Date of purchase:** _____________________  (please fill in)
 
 ## Summary
 The on-board **microSD card slot is non-functional**. A known-good, correctly formatted (FAT32) microSD card is **never recognised** by the board — the SD card fails its low-level SPI initialisation handshake. All other board functions work normally (e-paper display, buttons/rotary input, ESP32-S3, USB/serial, power). The fault is isolated to the SD card interface and is consistent with a **hardware defect on the SD slot** (most likely a bad solder joint / open connection on the SD data line, MISO/DAT0).
