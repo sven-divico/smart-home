@@ -1,0 +1,25 @@
+# Shared ESPHome boilerplate for every ESP-Claw node.
+#
+# Included via `packages:` from each node file. Node files must define the
+# substitutions `node_name` and `friendly`, and their own `esp32:`/board block
+# (boards differ per node). Everything common lives here so a new node is a
+# small file. See README.md for the node-authoring convention.
+
+logger:
+  # ESP32-S3 boards use native USB — route logs to the USB port.
+  hardware_uart: USB_SERIAL_JTAG
+
+# Native Home Assistant API connection (no encryption key required).
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback hotspot if WiFi fails, so a node is always recoverable.
+  ap:
+    ssid: "${node_name} setup"
+
+captive_portal:

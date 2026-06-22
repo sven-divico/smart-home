@@ -1,94 +1,85 @@
-# ESPHome node: `soil-pump-01` (Plant 1)
+# ESPHome track — node firmware for Home Assistant
 
-Fast-track node to get **one capacitive soil sensor** + **one pump relay** into Home Assistant.
-Intentionally simple / throwaway; we re-architect later. Config: [`soil-pump-01.yaml`](soil-pump-01.yaml).
+This folder holds the **ESPHome** nodes of ESP-Claw (the commodity sensor / actuator /
+display track). See [`docs/architecture.md`](../../docs/architecture.md) for the
+dual-track rule and the full node registry.
 
-## Status (2026-06-18)
+```
+firmware/esphome/
+├── common/base.yaml     # shared boilerplate every node includes (wifi/api/ota/logger/captive_portal)
+├── soil-pump-01.yaml    # reference template — copy this for a new node
+├── amoled-panel-01.yaml # Waveshare AMOLED touch panel (Phase-1 bring-up)
+├── secrets.yaml         # (gitignored) shared wifi_ssid / wifi_password
+└── README.md
+```
 
-✅ **Working and adopted in Home Assistant.**
+## Adding a node (the convention)
 
-- Board: **Adafruit Feather ESP32-S3, 8MB flash, no PSRAM** (`adafruit_feather_esp32s3_nopsram`)
-- Framework: **ESP-IDF** (switched from Arduino — see gotchas)
-- WiFi: joins **`d-42`**, signal ~-49 dB, **IP `192.168.178.192`**, hostname `soil-pump-01.local`
-- HA API: port **6053**, no encryption. Device + entities visible in HA.
-- MAC: `b4:3a:45:34:e7:a4`
+Copy `soil-pump-01.yaml` and keep it small — shared bits come from the package:
 
-### Entities in HA
-- `Plant 1 Soil Voltage` (V) — raw ADC
-- `Plant 1 Soil Moisture` (%) — derived; **NOT yet calibrated** (placeholder values)
-- `Plant 1 Pump` (switch) — relay; 30s safety auto-off
-- `Plant 1 Status` (light) — onboard red LED via `status_led`
+```yaml
+substitutions:
+  node_name: my-node-01
+  friendly: "My Node"
+esphome:
+  name: ${node_name}
+  friendly_name: ${friendly}
+esp32:
+  board: <your board>           # board stays per-node (they differ)
+  framework: { type: esp-idf }
+packages:
+  base: !include common/base.yaml   # ← wifi/api/ota/logger/captive_portal
+# ...only this node's own sensors/switches/display below
+```
 
-## Toolchain
+`common/base.yaml` reads `${node_name}` (used for the fallback-AP SSID), so every node
+gets a `<node> setup` recovery hotspot for free. Secrets live once in `secrets.yaml`.
 
-ESPHome CLI installed on the Mac via Homebrew (`brew install esphome`, v2026.5.3).
-HA on the Pi is **HA OS** (the "Apps" menu = the old Add-on Store); the ESPHome "App"
-is also installed there for later. We chose the Mac CLI so config stays in this repo.
+Then add a row to the registry in `docs/architecture.md`.
 
-`secrets.yaml` (gitignored) holds `wifi_ssid` / `wifi_password`.
+## Flashing & logging
 
-## Flashing procedure (hard-won — follow exactly)
-
-This board's **native USB fights esptool**. The reliable recipe:
+**First flash = USB.** After that, **flash and log over the network (OTA)** — no USB:
 
 ```bash
-cd firmware/esphome
-ESPY=$(head -1 "$(command -v esphome)" | sed 's/^#!//')   # esphome's bundled python
-BUILD=.esphome/build/soil-pump-01/.pioenvs/soil-pump-01
+esphome run  <node>.yaml --device <ip>     # OTA update
+esphome logs <node>.yaml --device <ip>     # live logs over the network
+```
 
-# 1. compile
-esphome compile soil-pump-01.yaml
+For the **first** USB flash, this repo's ESP32-S3 boards need esptool's bundled python and
+the merged factory image. The reliable recipe (learned on the Feather — see gotchas):
 
-# 2. flash the MERGED factory image at 0x0, at 115200 baud,
-#    and reset with WATCHDOG (NOT hard-reset) so it boots the app.
-"$ESPY" -m esptool --chip esp32s3 --port /dev/cu.usbmodem2101 \
+```bash
+ESPY=$(head -1 "$(command -v esphome)" | sed 's/^#!//')
+BUILD=.esphome/build/<node>/.pioenvs/<node>
+esphome compile <node>.yaml
+"$ESPY" -m esptool --chip esp32s3 --port /dev/cu.usbmodemXXXX \
   --before default-reset --after watchdog-reset --baud 115200 \
   write-flash -z --flash-size detect 0x0 $BUILD/firmware.factory.bin
 ```
 
-**Once it's on WiFi, stop using USB — flash & log over the network (OTA):**
-```bash
-esphome run  soil-pump-01.yaml --device 192.168.178.192   # OTA update
-esphome logs soil-pump-01.yaml --device 192.168.178.192   # live logs over network
-```
+### ESP32-S3 native-USB gotchas (Feather-discovered, likely apply to other S3 boards)
+1. **Use `--after watchdog-reset`, not `hard-reset`.** esptool's hard-reset can leave the
+   chip in DOWNLOAD mode (`boot:0x0`), so the app never starts (no LED, no WiFi).
+2. **115200 baud** for USB flashing (460800 gave `Serial data stream stopped`).
+3. **Reading USB serial: open the port passively** — never assert DTR/RTS (RTS strap-resets
+   into download mode). Easier: just use OTA logs once it's on WiFi.
+4. **`framework: esp-idf`** (Arduino gave `'USBSerial' was not declared` and no USB logs).
 
-## Gotchas we hit (so we don't repeat them)
+## Nodes
 
-1. **Arduino framework wouldn't compile** (`'USBSerial' was not declared`). Fixed by
-   switching to `framework: esp-idf`. (Arduino also gave no USB logs.)
-2. **`clamp(x, 0.0, 100.0)`** failed — needs `0.0f, 100.0f` (float vs double). Fixed.
-3. **esptool `hard-reset` (and physical reset) boots the chip into DOWNLOAD mode**
-   (`boot:0x0 (DOWNLOAD)`) instead of the app — the app never starts: no LED, no WiFi.
-   Use **`--after watchdog-reset`** to boot the app. A clean VBUS power-on *should* use
-   normal strapping and boot the app — **still needs confirming** (see TODO).
-4. **Reading USB serial: open the port PASSIVELY** — do NOT assert DTR/RTS. Asserting
-   RTS strap-resets the chip into download mode, so you read nothing. (pyserial:
-   set `dtr=False; rts=False` before `open()`.) Easier: just use OTA logs now.
-5. **`status_led` is OFF when healthy/connected**, ON/blinking only on a problem.
-   "LED off" briefly fooled us into thinking the firmware was dead — it was fine.
-6. Higher baud (460800) gave `Serial data stream stopped` — use **115200**.
+### `soil-pump-01` — ✅ live in HA
+Adafruit Feather ESP32-S3 (8MB). Soil moisture sensor + pump relay. IP `192.168.178.192`.
+Open TODOs: confirm a clean power-on boots the app (not download mode); calibrate moisture %
+(`calibrate_linear` in the yaml); wire + test pump (need relay-module photo for polarity).
 
-## TODO (next session)
+### `amoled-panel-01` — 🚧 Phase-1 bring-up (not yet flashed)
+Waveshare ESP32-S3-Touch-AMOLED-1.75**C**. Phase 1 = screen on + touch logging + HA connection.
+Config follows the [official ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/).
 
-- [ ] **Confirm a clean power-on boots the app** (unplug ~3s, replug; device should
-      reappear online in HA within ~30s). If it boots to download instead, investigate
-      GPIO0 strapping / hold.
-- [ ] **Calibrate moisture %**: read `Plant 1 Soil Voltage` with sensor (a) dry in air,
-      (b) tip in water; put those two voltages into `calibrate_linear` in the YAML; re-flash via OTA.
-- [ ] **Wire + test the pump.** OPEN QUESTION: the relay's motor-side pins were labeled
-      `Low / Level / Trigger` (not standard COM/NO/NC) — need a photo of the relay module
-      to confirm terminals + trigger polarity before driving the pump. Pump must be on its
-      OWN power supply, switched by the relay — never powered from the Feather.
-- [ ] Soil sensor powered from **3.3V** (not 5V) so AOUT stays in ADC range. Signal → A5 (GPIO8).
+**⚠️ Touch needs an external component.** `cst9217` is not in stable ESPHome (2026.5.3); the
+yaml references the community repo `github://shelson/esphome-cst9217`. **Review and authorize
+that repo before compiling** — compiling pulls and builds third-party code. Pin a specific
+commit once you've confirmed it works. The display (CO5300) is native ESPHome, no external code.
 
-## Wiring map (Feather silkscreen → module)
-
-| From | To | Note |
-|------|----|------|
-| soil VCC | `3V` | 3.3V keeps AOUT in ADC range |
-| soil GND | `GND` | |
-| soil AOUT | `A5` (GPIO8) | ADC1, WiFi-safe |
-| relay VCC | `USB` (5V) | coil power |
-| relay GND | `GND` | |
-| relay IN | `D6` (GPIO6) | control, active-low (`inverted: true`) |
-| relay COM/NO | pump + separate supply | isolated from Feather |
+**Verify at flash time (1.75C variant):** flash size (16MB assumed) and the exact GPIO pins.

@@ -1,7 +1,6 @@
-# ESP-Claw — fast-track node: 1x capacitive soil sensor + 1x pump relay
-# Board: Adafruit Feather ESP32-S3 (8MB flash, no PSRAM)
-# Purpose: get a live moisture reading + a pump toggle into Home Assistant quickly.
-# This is intentionally throwaway/simple; we re-architect later.
+# ESP-Claw node: 1x capacitive soil sensor + 1x pump relay ("Plant 1").
+# Board: Adafruit Feather ESP32-S3, 8MB flash, no PSRAM.
+# Reference template for ESPHome nodes — shared boilerplate is in common/base.yaml.
 #
 # Wiring (Feather silkscreen label -> module pin):
 #   3V   -> soil VCC        (power sensor at 3.3V so AOUT stays in ADC range)
@@ -24,27 +23,12 @@ esp32:
   framework:
     type: esp-idf
 
-logger:
-  # Route logs to the native USB port so we can debug over USB.
-  hardware_uart: USB_SERIAL_JTAG
-
-# Native Home Assistant connection — the ESPHome add-on injects an encryption key.
-api:
-
-ota:
-  - platform: esphome
-
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  # Fallback hotspot if WiFi fails, so you can always recover the device.
-  ap:
-    ssid: "${node_name} setup"
-
-captive_portal:
+# Shared wifi / api / ota / logger / captive_portal.
+packages:
+  base: !include common/base.yaml
 
 # Onboard red LED (GPIO13) as a physical status beacon:
-#   off = not running, blinking = running but not connected, solid = all good.
+#   off = all good, blinking = running but not connected.
 light:
   - platform: status_led
     name: "${friendly} Status"

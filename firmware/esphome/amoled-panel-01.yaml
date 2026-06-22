@@ -1,0 +1,114 @@
+# ESP-Claw node: Waveshare ESP32-S3-Touch-AMOLED-1.75C — HA touch control panel.
+#
+# PHASE 1 (this scaffold) = bring-up only: screen on + backlight, touch registering
+# in the logs, and connected to Home Assistant. Phase 2 adds the LVGL dashboard with
+# live garden data + a pump button.
+#
+# Hardware blocks (display/touch/pins) follow the official ESPHome device page:
+#   https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-175/
+# VERIFY AT FLASH TIME on the 1.75C variant: confirm flash size (16MB assumed) and
+# that the GPIO pins below match — C-variant pinout may differ slightly.
+
+substitutions:
+  node_name: amoled-panel-01
+  friendly: "Garden Panel"
+
+esphome:
+  name: ${node_name}
+  friendly_name: ${friendly}
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.f_flash: 80000000L
+    board_build.f_cpu: 240000000L
+
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Shared wifi / api / ota / logger / captive_portal.
+packages:
+  base: !include common/base.yaml
+
+# The CST9217 touch driver isn't in stable ESPHome yet — external component.
+# Vetted 2026-06-22: ~190 lines, I2C + GPIO only (no network/fs/exec), a faithful
+# port of the official Waveshare driver. Pinned to the reviewed commit so it can't
+# change under us. Re-review before bumping the ref.
+external_components:
+  - source:
+      type: git
+      url: https://github.com/shelson/esphome-cst9217
+      ref: 126c0174a17857a7496284ab9d06ba5d7a141fbd
+    components: [cst9217]
+
+# --- Display: QSPI AMOLED, CO5300 driver, 466x466 round ---
+spi:
+  - id: display_qspi
+    type: quad
+    clk_pin: GPIO38
+    data_pins: [GPIO4, GPIO5, GPIO6, GPIO7]
+
+display:
+  - platform: mipi_spi
+    id: disp1
+    model: CO5300
+    bus_mode: quad
+    reset_pin: GPIO39
+    cs_pin: GPIO12
+    dimensions:
+      width: 466
+      height: 466
+    update_interval: 1s
+    # Phase-1 sanity screen: device name + live WiFi status.
+    lambda: |-
+      it.fill(Color::BLACK);
+      it.printf(233, 200, id(roboto), Color(0xFFFFFF), TextAlign::CENTER, "${friendly}");
+      bool up = wifi::global_wifi_component->is_connected();
+      it.printf(233, 250, id(roboto), up ? Color(0x00FF88) : Color(0xFF5555),
+                TextAlign::CENTER, up ? "WiFi OK" : "WiFi ...");
+
+# Backlight brightness routed through the display driver.
+output:
+  - platform: template
+    id: backlight_brightness
+    type: float
+    write_action:
+      - lambda: id(disp1).set_brightness(state * 255);
+
+light:
+  - platform: monochromatic
+    id: display_backlight
+    name: "${friendly} Backlight"
+    output: backlight_brightness
+    restore_mode: ALWAYS_ON
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto
+    size: 32
+
+# --- Touch: CST9217 over I2C ---
+i2c:
+  - id: bus_a
+    sda: GPIO15
+    scl: GPIO14
+
+touchscreen:
+  - platform: cst9217
+    display: disp1
+    id: ts_disp1
+    interrupt_pin: GPIO11
+    reset_pin: GPIO40
+    transform:
+      mirror_x: true
+      mirror_y: true
+    # Phase-1 touch confirmation: every tap shows up in the logs.
+    on_touch:
+      - logger.log:
+          format: "touch at (%d, %d)"
+          args: ['touch.x', 'touch.y']
